@@ -22,10 +22,7 @@ android {
         versionName = "1.0.0"
 
         val geminiKey = localProps.getProperty("GEMINI_API_KEY") ?: System.getenv("GEMINI_API_KEY") ?: ""
-        val porcupineKey = localProps.getProperty("PORCUPINE_ACCESS_KEY") ?: System.getenv("PORCUPINE_ACCESS_KEY") ?: ""
-
         buildConfigField("String", "GEMINI_API_KEY", "\"$geminiKey\"")
-        buildConfigField("String", "PORCUPINE_ACCESS_KEY", "\"$porcupineKey\"")
     }
 
     buildFeatures { buildConfig = true }
@@ -41,5 +38,4 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("ai.picovoice:porcupine-android:3.0.2")
 }

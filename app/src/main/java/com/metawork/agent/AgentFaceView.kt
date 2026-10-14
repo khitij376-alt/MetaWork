@@ -1,0 +1,128 @@
+package com.metawork.agent
+
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.view.View
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
+
+class AgentFaceView(context: Context, private val isMiniOverlay: Boolean = false) : View(context) {
+
+    enum class FaceState {
+        LISTENING, SPEAKING, EXECUTING, IDLE
+    }
+
+    var state: FaceState = FaceState.LISTENING
+        set(value) {
+            field = value
+            postInvalidateOnAnimation()
+        }
+
+    var audioLevel: Float = 0.2f
+        set(value) {
+            field = value.coerceIn(0.05f, 1.0f)
+            postInvalidateOnAnimation()
+        }
+
+    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#0F172A")
+    }
+    private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = if (isMiniOverlay) 5f else 8f
+    }
+    private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = if (isMiniOverlay) 8f else 18f
+    }
+    private val featurePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
+    private val arcRect = RectF()
+    private val eyeRect = RectF()
+    private val mouthBarRect = RectF()
+    private var tick = 0f
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        tick += 0.08f
+
+        val cx = width / 2f
+        val cy = height / 2f
+        val radius = (minOf(width, height) / 2f) * 0.84f
+
+        val primaryColor = when (state) {
+            FaceState.LISTENING -> Color.parseColor("#38BDF8")
+            FaceState.SPEAKING -> Color.parseColor("#10B981")
+            FaceState.EXECUTING -> Color.parseColor("#F59E0B")
+            FaceState.IDLE -> Color.parseColor("#64748B")
+        }
+
+        val pulse = 1f + 0.04f * sin(tick * 2f)
+        glowPaint.color = primaryColor
+        glowPaint.alpha = 55
+        canvas.drawCircle(cx, cy, radius * pulse, glowPaint)
+        canvas.drawCircle(cx, cy, radius, bgPaint)
+
+        ringPaint.color = primaryColor
+        ringPaint.alpha = 220
+        arcRect.set(cx - radius, cy - radius, cx + radius, cy + radius)
+        val startAngle = (tick * 25f) % 360f
+        canvas.drawArc(arcRect, startAngle, 110f, false, ringPaint)
+        canvas.drawArc(arcRect, startAngle + 180f, 110f, false, ringPaint)
+
+        featurePaint.color = primaryColor
+        val isBlinking = (sin(tick * 0.45f) > 0.96f)
+        val eyeOffsetX = radius * 0.36f
+        val eyeCenterY = cy - radius * 0.16f
+        val eyeW = radius * 0.22f
+        val eyeH = if (isBlinking) radius * 0.03f else radius * 0.16f
+
+        eyeRect.set(cx - eyeOffsetX - eyeW / 2f, eyeCenterY - eyeH / 2f, cx - eyeOffsetX + eyeW / 2f, eyeCenterY + eyeH / 2f)
+        canvas.drawRoundRect(eyeRect, eyeW / 2f, eyeW / 2f, featurePaint)
+
+        eyeRect.set(cx + eyeOffsetX - eyeW / 2f, eyeCenterY - eyeH / 2f, cx + eyeOffsetX + eyeW / 2f, eyeCenterY + eyeH / 2f)
+        canvas.drawRoundRect(eyeRect, eyeW / 2f, eyeW / 2f, featurePaint)
+
+        if (!isBlinking && !isMiniOverlay) {
+            featurePaint.color = Color.WHITE
+            featurePaint.alpha = 200
+            val lookShift = sin(tick * 0.7f) * (eyeW * 0.12f)
+            canvas.drawCircle(cx - eyeOffsetX + lookShift, eyeCenterY - eyeH * 0.15f, eyeW * 0.14f, featurePaint)
+            canvas.drawCircle(cx + eyeOffsetX + lookShift, eyeCenterY - eyeH * 0.15f, eyeW * 0.14f, featurePaint)
+            featurePaint.color = primaryColor
+            featurePaint.alpha = 255
+        }
+
+        val mouthY = cy + radius * 0.34f
+        val barCount = if (isMiniOverlay) 3 else 5
+        val totalMouthW = radius * 0.72f
+        val barW = totalMouthW / (barCount * 1.8f)
+        val gap = barW * 0.8f
+        val startX = cx - ((barCount * barW + (barCount - 1) * gap) / 2f)
+
+        val activeWave = when (state) {
+            FaceState.SPEAKING -> 0.35f + 0.65f * abs(sin(tick * 4.5f))
+            FaceState.LISTENING -> 0.18f + (audioLevel * 0.75f) * abs(sin(tick * 3.0f))
+            FaceState.EXECUTING -> 0.45f * abs(cos(tick * 5.0f))
+            FaceState.IDLE -> 0.12f
+        }
+
+        for (i in 0 until barCount) {
+            val phase = sin(tick * 4f + i * 1.1f)
+            val centerBoost = if (i == barCount / 2) 1.35f else 0.85f
+            val barH = (radius * 0.28f * activeWave * centerBoost * (0.5f + 0.5f * abs(phase))).coerceAtLeast(radius * 0.05f)
+            val left = startX + i * (barW + gap)
+            mouthBarRect.set(left, mouthY - barH / 2f, left + barW, mouthY + barH / 2f)
+            canvas.drawRoundRect(mouthBarRect, barW / 2f, barW / 2f, featurePaint)
+        }
+
+        postInvalidateDelayed(32L)
+    }
+}

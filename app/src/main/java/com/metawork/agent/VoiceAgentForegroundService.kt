@@ -210,7 +210,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
         } else {
             setFaceState("SLEEP", 0.1f)
             updateStatus("🌙 SLEEPING — Say 'Muse' to Wake")
-            transcriptCallback?.invoke("🌙 Muse is Sleeping. Say "Muse" or tap my face to wake me.")
+            transcriptCallback?.invoke("🌙 Muse is Sleeping. Say \"Muse\" or tap my face to wake me.")
         }
     }
 
@@ -332,7 +332,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                             if (!isAwakeForCommand) return
                             val partial = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
                             if (!partial.isNullOrBlank()) {
-                                transcriptCallback?.invoke("🎙️ Hearing: "$partial..."")
+                                transcriptCallback?.invoke("🎙️ Hearing: \"$partial...\"")
                             }
                         }
                         override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -370,7 +370,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                 return
             } else {
                 // User said "Muse <command>" in one sentence -> Run command & go back to sleep
-                transcriptCallback?.invoke("🗣️ You: "$rawSpoken"")
+                transcriptCallback?.invoke("🗣️ You: \"$rawSpoken\"")
                 logCallback?.invoke("You (Wake+Cmd): $inlineCommand")
                 handleSpokenCommand(inlineCommand)
                 return
@@ -379,7 +379,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
 
         // If Muse is currently AWAKE (within 16s window after saying "Muse" or tapping face)
         if (isAwakeForCommand && now <= awakeUntilMs) {
-            transcriptCallback?.invoke("🗣️ You: "$rawSpoken"")
+            transcriptCallback?.invoke("🗣️ You: \"$rawSpoken\"")
             logCallback?.invoke("You said: $rawSpoken")
             handleSpokenCommand(rawSpoken)
         } else {
@@ -415,7 +415,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
      */
     private fun extractWakeWordCommand(spoken: String): String? {
         val wakeRegex = Regex(
-            "^(?:hey\s+|hi\s+|hello\s+|ok\s+|okay\s+|o\s+)?(?:muse|myooz|mews|miuz|म्यूज|म्यूज़)(?:\s+|[,.:!]+|$)(.*)$",
+            "^(?:hey\\s+|hi\\s+|hello\\s+|ok\\s+|okay\\s+|o\\s+)?(?:muse|myooz|mews|miuz|म्यूज|म्यूज़)(?:\\s+|[,.:!]+|$)(.*)$",
             RegexOption.IGNORE_CASE
         )
         val match = wakeRegex.find(spoken.trim())
@@ -424,7 +424,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
         }
         // Also handle if STT transcribed "Hey Muse" as "hey news" or "hey music"
         val phoneticRegex = Regex(
-            "^(?:hey|hi|hello|ok)\s+(?:news|music)(?:\s+|[,.:!]+|$)(.*)$",
+            "^(?:hey|hi|hello|ok)\\s+(?:news|music)(?:\\s+|[,.:!]+|$)(.*)$",
             RegexOption.IGNORE_CASE
         )
         val phoneticMatch = phoneticRegex.find(spoken.trim())
@@ -483,16 +483,16 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
 
         // 2. Hinglish pattern: "[whatsapp open karke / whatsapp par] <recipient> ko <message> [message karo / bhejo / send karo]"
         val hinglishRegex = Regex(
-            "(?:whatsapp\s+(?:open\s+karke|khol\s+ke|par|pe|mein|me)\s+|open\s+whatsapp\s+and\s+)?([a-zA-Z0-9+\s]{2,25}?)\s+ko\s+(.+?)(?:\s+(?:whatsapp\s+karo|message\s+karo|msg\s+karo|bhejo|bhej\s+do|send\s+karo|likho))?$",
+            "(?:whatsapp\\s+(?:open\\s+karke|khol\\s+ke|par|pe|mein|me)\\s+|open\\s+whatsapp\\s+and\\s+)?([a-zA-Z0-9+\\s]{2,25}?)\\s+ko\\s+(.+?)(?:\\s+(?:whatsapp\\s+karo|message\\s+karo|msg\\s+karo|bhejo|bhej\\s+do|send\\s+karo|likho))?$",
             RegexOption.IGNORE_CASE
         )
         val hMatch = hinglishRegex.find(clean)
         if (hMatch != null) {
             val rec = hMatch.groupValues[1]
-                .replace(Regex("^(?:whatsapp|par|pe|open|karke|and|message|send)\s+", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("^(?:whatsapp|par|pe|open|karke|and|message|send)\\s+", RegexOption.IGNORE_CASE), "")
                 .trim()
             val msg = hMatch.groupValues[2]
-                .replace(Regex("^(?:whatsapp\s+message|message|msg|ki|saying)\s+", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("^(?:whatsapp\\s+message|message|msg|ki|saying)\\s+", RegexOption.IGNORE_CASE), "")
                 .trim()
                 .ifBlank { "Hello" }
             if (rec.isNotBlank()) return Pair(rec, msg)
@@ -500,7 +500,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
 
         // 3. English pattern: "send whatsapp [message] to <recipient> [saying/that] <message>"
         val englishToRegex = Regex(
-            "(?:to|for)\s+([a-zA-Z0-9+]+(?:\s+[a-zA-Z0-9+]+)?)\s+(?:saying|that|message|msg|:)\s+(.+)$",
+            "(?:to|for)\\s+([a-zA-Z0-9+]+(?:\\s+[a-zA-Z0-9+]+)?)\\s+(?:saying|that|message|msg|:)\\s+(.+)$",
             RegexOption.IGNORE_CASE
         )
         val eMatch = englishToRegex.find(clean)
@@ -510,7 +510,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
 
         // 4. English pattern: "message <recipient> on whatsapp <message>" or "whatsapp <recipient> <message>"
         val msgOnWaRegex = Regex(
-            "(?:message|msg|text|whatsapp)\s+(?:to\s+)?([a-zA-Z0-9+]+)\s+(?:on\s+whatsapp\s+)?(?:saying\s+|that\s+)?(.+)$",
+            "(?:message|msg|text|whatsapp)\\s+(?:to\\s+)?([a-zA-Z0-9+]+)\\s+(?:on\\s+whatsapp\\s+)?(?:saying\\s+|that\\s+)?(.+)$",
             RegexOption.IGNORE_CASE
         )
         val mMatch = msgOnWaRegex.find(clean)
@@ -518,7 +518,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
             val candidateRec = mMatch.groupValues[1].trim()
             if (!candidateRec.equals("whatsapp", ignoreCase = true) && !candidateRec.equals("message", ignoreCase = true)) {
                 val msg = mMatch.groupValues[2]
-                    .replace(Regex("^on\s+whatsapp\s*", RegexOption.IGNORE_CASE), "")
+                    .replace(Regex("^on\\s+whatsapp\\s*", RegexOption.IGNORE_CASE), "")
                     .trim()
                     .ifBlank { "Hello" }
                 return Pair(candidateRec, msg)
@@ -559,7 +559,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                     }
                     lower.startsWith("write ") || lower.startsWith("type ") || lower.contains("likho ") -> {
                         val txt = spoken
-                            .replace(Regex("^(write|type|likho)\s+", RegexOption.IGNORE_CASE), "")
+                            .replace(Regex("^(write|type|likho)\\s+", RegexOption.IGNORE_CASE), "")
                             .trim()
                         logCallback?.invoke("⚡ Action: Typing text on screen: '$txt'")
                         val res = taskExecutor.executeToolCall("enter_text", JSONObject().put("text", txt).put("click_send_after", true))
@@ -685,7 +685,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                         val label = spoken
                             .substringAfter("click ", spoken)
                             .substringAfter("tap ", spoken)
-                            .replace(Regex("^on\s+", RegexOption.IGNORE_CASE), "")
+                            .replace(Regex("^on\\s+", RegexOption.IGNORE_CASE), "")
                             .replace("dabao", "")
                             .trim()
                         logCallback?.invoke("⚡ Action: Click '$label'")

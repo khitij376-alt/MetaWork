@@ -22,7 +22,7 @@ android {
         versionName = "3.0.0"
 
         val geminiKey = localProps.getProperty("GEMINI_API_KEY") ?: System.getenv("GEMINI_API_KEY") ?: ""
-        buildConfigField("String", "GEMINI_API_KEY", "\"$geminiKey\"")
+        buildConfigField("String", "GEMINI_API_KEY", "\\"$geminiKey\\"")
     }
 
     buildFeatures {

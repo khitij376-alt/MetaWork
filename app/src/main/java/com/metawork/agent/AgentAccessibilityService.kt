@@ -3,13 +3,19 @@ package com.metawork.agent
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
+import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Bundle
 import android.util.Log
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.abs
 
 class AgentAccessibilityService : AccessibilityService() {
 
@@ -20,10 +26,73 @@ class AgentAccessibilityService : AccessibilityService() {
             private set
     }
 
+    private var windowManager: WindowManager? = null
+    private var floatingFaceView: AgentFaceView? = null
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         Log.i(TAG, "MetaWork Accessibility Service connected.")
+        showFloatingAgentFaceOverlay()
+    }
+
+    private fun showFloatingAgentFaceOverlay() {
+        if (floatingFaceView != null) return
+        try {
+            windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+            val sizePx = (resources.displayMetrics.density * 68).toInt()
+            val params = WindowManager.LayoutParams(
+                sizePx,
+                sizePx,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.END
+                x = 24
+                y = 280
+            }
+
+            val face = AgentFaceView(this, isMiniOverlay = true)
+            var initialX = 0
+            var initialY = 0
+            var touchX = 0f
+            var touchY = 0f
+
+            face.setOnTouchListener { _: View, event: MotionEvent ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialX = params.x
+                        initialY = params.y
+                        touchX = event.rawX
+                        touchY = event.rawY
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        params.x = initialX - (event.rawX - touchX).toInt()
+                        params.y = initialY + (event.rawY - touchY).toInt()
+                        try { windowManager?.updateViewLayout(face, params) } catch (_: Throwable) {}
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (abs(event.rawX - touchX) < 18 && abs(event.rawY - touchY) < 18) {
+                            VoiceAgentForegroundService.instance?.triggerImmediateListen("Listening now. Speak your command.")
+                        }
+                        true
+                    }
+                    else -> false
+                }
+            }
+
+            windowManager?.addView(face, params)
+            floatingFaceView = face
+        } catch (t: Throwable) {
+            Log.e(TAG, "Overlay attach error", t)
+        }
+    }
+
+    fun updateFloatingFaceState(state: AgentFaceView.FaceState) {
+        floatingFaceView?.state = state
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
@@ -31,6 +100,10 @@ class AgentAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onDestroy() {
+        try {
+            floatingFaceView?.let { windowManager?.removeView(it) }
+        } catch (_: Throwable) {}
+        floatingFaceView = null
         instance = null
         super.onDestroy()
     }

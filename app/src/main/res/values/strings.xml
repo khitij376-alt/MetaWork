@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MetaWork 24/7 Agent</string>
+    <string name="accessibility_service_description">Allows MetaWork Agent to read screen elements, click buttons, fill forms, book tickets, and send messages purely by voice command.</string>
+</resources>

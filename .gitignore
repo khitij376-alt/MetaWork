@@ -1,12 +1,19 @@
+# Built application files
 *.apk
 *.aab
 *.ap_
 *.dex
 *.class
+
+# Gradle & build directories
 .gradle/
 build/
 app/build/
+
+# Local secrets (NEVER commit API keys)
 local.properties
+
+# Android Studio / IDE files
 *.iml
 .idea/
 .DS_Store

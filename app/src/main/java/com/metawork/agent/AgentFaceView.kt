@@ -12,11 +12,7 @@ import kotlin.math.sin
 
 class AgentFaceView(context: Context, private val isMiniOverlay: Boolean = false) : View(context) {
 
-    enum class FaceState {
-        LISTENING, SPEAKING, EXECUTING, IDLE
-    }
-
-    var state: FaceState = FaceState.LISTENING
+    var faceMode: String = "LISTENING"
         set(value) {
             field = value
             postInvalidateOnAnimation()
@@ -57,11 +53,11 @@ class AgentFaceView(context: Context, private val isMiniOverlay: Boolean = false
         val cy = height / 2f
         val radius = (minOf(width, height) / 2f) * 0.84f
 
-        val primaryColor = when (state) {
-            FaceState.LISTENING -> Color.parseColor("#38BDF8")
-            FaceState.SPEAKING -> Color.parseColor("#10B981")
-            FaceState.EXECUTING -> Color.parseColor("#F59E0B")
-            FaceState.IDLE -> Color.parseColor("#64748B")
+        val primaryColor = when (faceMode) {
+            "SPEAKING" -> Color.parseColor("#10B981")
+            "EXECUTING" -> Color.parseColor("#F59E0B")
+            "IDLE" -> Color.parseColor("#64748B")
+            else -> Color.parseColor("#38BDF8")
         }
 
         val pulse = 1f + 0.04f * sin(tick * 2f)
@@ -107,11 +103,11 @@ class AgentFaceView(context: Context, private val isMiniOverlay: Boolean = false
         val gap = barW * 0.8f
         val startX = cx - ((barCount * barW + (barCount - 1) * gap) / 2f)
 
-        val activeWave = when (state) {
-            FaceState.SPEAKING -> 0.35f + 0.65f * abs(sin(tick * 4.5f))
-            FaceState.LISTENING -> 0.18f + (audioLevel * 0.75f) * abs(sin(tick * 3.0f))
-            FaceState.EXECUTING -> 0.45f * abs(cos(tick * 5.0f))
-            FaceState.IDLE -> 0.12f
+        val activeWave = when (faceMode) {
+            "SPEAKING" -> 0.35f + 0.65f * abs(sin(tick * 4.5f))
+            "EXECUTING" -> 0.45f * abs(cos(tick * 5.0f))
+            "IDLE" -> 0.12f
+            else -> 0.18f + (audioLevel * 0.75f) * abs(sin(tick * 3.0f))
         }
 
         for (i in 0 until barCount) {

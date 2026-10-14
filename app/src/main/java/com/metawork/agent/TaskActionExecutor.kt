@@ -63,7 +63,11 @@ class TaskActionExecutor(private val context: Context) {
                     val typed = service?.inputTextIntoField(fieldHint, text) ?: false
                     if (typed && submitAfter) {
                         mainHandler.postDelayed({
-                            service?.clickElementByLabel("Send") ?: service?.clickElementByLabel("Search")
+                            if (service != null) {
+                                if (!service.clickElementByLabel("Send")) {
+                                    service.clickElementByLabel("Search")
+                                }
+                            }
                         }, 450L)
                     }
                     result.put("status", if (typed) "ok" else "failed")

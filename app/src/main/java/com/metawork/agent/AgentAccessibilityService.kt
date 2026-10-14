@@ -91,8 +91,8 @@ class AgentAccessibilityService : AccessibilityService() {
         }
     }
 
-    fun updateFloatingFaceState(state: AgentFaceView.FaceState) {
-        floatingFaceView?.state = state
+    fun updateFloatingFaceState(state: String) {
+        floatingFaceView?.faceMode = state
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}

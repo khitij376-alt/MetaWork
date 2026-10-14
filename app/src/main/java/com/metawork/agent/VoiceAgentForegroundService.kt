@@ -45,7 +45,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
         var statusCallback: ((String) -> Unit)? = null
         var transcriptCallback: ((String) -> Unit)? = null
         var logCallback: ((String) -> Unit)? = null
-        var faceStateCallback: ((AgentFaceView.FaceState, Float) -> Unit)? = null
+        var faceStateCallback: ((String, Float) -> Unit)? = null
     }
 
     private val safeHandler = CoroutineExceptionHandler { _, t ->
@@ -57,7 +57,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
     private var wakeLock: PowerManager.WakeLock? = null
     lateinit var taskExecutor: TaskActionExecutor
         private set
-    private lateinit var gemini: GeminiVoiceSessionManager
+    private var gemini: GeminiVoiceSessionManager? = null
     private var tts: TextToSpeech? = null
     private var speechRecognizer: SpeechRecognizer? = null
     private var isDestroyed = false
@@ -84,15 +84,12 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
             val notification = buildNotification("24/7 Voice Agent Active — Speak Anytime")
             val hasMicPerm = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                val fgsType = if (hasMicPerm) {
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                } else {
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && hasMicPerm) {
+                try {
+                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                } catch (_: Throwable) {
+                    startForeground(NOTIFICATION_ID, notification)
                 }
-                startForeground(NOTIFICATION_ID, notification, fgsType)
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && hasMicPerm) {
-                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
@@ -128,11 +125,11 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {
                     isSpeaking = true
-                    setFaceState(AgentFaceView.FaceState.SPEAKING, 0.8f)
+                    setFaceState("SPEAKING", 0.8f)
                 }
                 override fun onDone(utteranceId: String?) {
                     isSpeaking = false
-                    setFaceState(AgentFaceView.FaceState.LISTENING, 0.2f)
+                    setFaceState("LISTENING", 0.2f)
                     mainHandler.postDelayed({ startContinuousOnDeviceListening() }, 250L)
                 }
                 @Deprecated("Deprecated in Java")
@@ -162,7 +159,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
         mainHandler.post {
             try { speechRecognizer?.cancel() } catch (_: Throwable) {}
         }
-        setFaceState(AgentFaceView.FaceState.SPEAKING, 0.85f)
+        setFaceState("SPEAKING", 0.85f)
         transcriptCallback?.invoke("🤖 Agent: $message")
         logCallback?.invoke("Agent: $message")
 
@@ -171,13 +168,13 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
         if (res != TextToSpeech.SUCCESS) {
             mainHandler.postDelayed({
                 isSpeaking = false
-                setFaceState(AgentFaceView.FaceState.LISTENING, 0.2f)
+                setFaceState("LISTENING", 0.2f)
                 startContinuousOnDeviceListening()
             }, 2200L)
         }
     }
 
-    private fun setFaceState(state: AgentFaceView.FaceState, level: Float) {
+    private fun setFaceState(state: String, level: Float) {
         mainHandler.post {
             faceStateCallback?.invoke(state, level)
             AgentAccessibilityService.instance?.updateFloatingFaceState(state)
@@ -194,15 +191,15 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                         override fun onReadyForSpeech(params: Bundle?) {
                             isListeningActive = true
                             updateStatus("LISTENING 24/7 — Speak Now")
-                            setFaceState(AgentFaceView.FaceState.LISTENING, 0.25f)
+                            setFaceState("LISTENING", 0.25f)
                         }
                         override fun onBeginningOfSpeech() {
                             isListeningActive = true
-                            setFaceState(AgentFaceView.FaceState.LISTENING, 0.6f)
+                            setFaceState("LISTENING", 0.6f)
                         }
                         override fun onRmsChanged(rmsdB: Float) {
                             val norm = ((rmsdB + 2f) / 12f).coerceIn(0.1f, 1.0f)
-                            setFaceState(AgentFaceView.FaceState.LISTENING, norm)
+                            setFaceState("LISTENING", norm)
                         }
                         override fun onBufferReceived(buffer: ByteArray?) {}
                         override fun onEndOfSpeech() {
@@ -271,7 +268,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
 
     fun handleSpokenCommand(spoken: String) {
         val lower = spoken.lowercase(Locale.ROOT).trim()
-        setFaceState(AgentFaceView.FaceState.EXECUTING, 0.7f)
+        setFaceState("EXECUTING", 0.7f)
         updateStatus("EXECUTING: $spoken")
 
         scope.launch {
@@ -427,7 +424,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
         mainHandler.removeCallbacksAndMessages(null)
         try { speechRecognizer?.destroy() } catch (_: Throwable) {}
         try { tts?.shutdown() } catch (_: Throwable) {}
-        gemini.stopSession()
+        try { gemini?.stopSession() } catch (_: Throwable) {}
         try { wakeLock?.let { if (it.isHeld) it.release() } } catch (_: Throwable) {}
         scope.cancel()
         super.onDestroy()

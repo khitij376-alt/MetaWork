@@ -16,7 +16,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Button
-import android.widget.GridLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -40,7 +39,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var accStatusPill: TextView
     private lateinit var accessibilityBannerBtn: Button
 
-    private val logLines = ArrayDeque<String>()
+    private val logLines = mutableListOf<String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -181,8 +180,8 @@ class MainActivity : AppCompatActivity() {
         }
         container.addView(gridHeader)
 
-        val grid = GridLayout(this).apply {
-            columnCount = 2
+        val gridContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 bottomMargin = 14.dp()
             }
@@ -199,38 +198,45 @@ class MainActivity : AppCompatActivity() {
             Triple("🔍 Google Search", "Say: 'Search weather today'", "Search Google for weather today")
         )
 
-        quickTasks.forEachIndexed { idx, (title, subtitle, command) ->
-            val card = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                background = roundedBg("#111827", "#1E293B", 14.dp())
-                setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
-                layoutParams = GridLayout.LayoutParams().apply {
-                    width = 0
-                    height = ViewGroup.LayoutParams.WRAP_CONTENT
-                    columnSpec = GridLayout.spec(idx % 2, 1f)
-                    setMargins(4.dp(), 4.dp(), 4.dp(), 4.dp())
+        for (i in quickTasks.indices step 2) {
+            val rowLayout = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            }
+            for (j in 0..1) {
+                if (i + j < quickTasks.size) {
+                    val item = quickTasks[i + j]
+                    val card = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        background = roundedBg("#111827", "#1E293B", 14.dp())
+                        setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
+                        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                            setMargins(4.dp(), 4.dp(), 4.dp(), 4.dp())
+                        }
+                        setOnClickListener {
+                            VoiceAgentForegroundService.instance?.handleSpokenCommand(item.third)
+                        }
+                    }
+                    val tView = TextView(this).apply {
+                        text = item.first
+                        textSize = 14f
+                        setTypeface(typeface, Typeface.BOLD)
+                        setTextColor(Color.parseColor("#38BDF8"))
+                    }
+                    val sView = TextView(this).apply {
+                        text = item.second
+                        textSize = 11f
+                        setTextColor(Color.parseColor("#94A3B8"))
+                        setPadding(0, 3.dp(), 0, 0)
+                    }
+                    card.addView(tView)
+                    card.addView(sView)
+                    rowLayout.addView(card)
                 }
-                setOnClickListener {
-                    VoiceAgentForegroundService.instance?.handleSpokenCommand(command)
-                }
             }
-            val tView = TextView(this).apply {
-                text = title
-                textSize = 14f
-                setTypeface(typeface, Typeface.BOLD)
-                setTextColor(Color.parseColor("#38BDF8"))
-            }
-            val sView = TextView(this).apply {
-                text = subtitle
-                textSize = 11f
-                setTextColor(Color.parseColor("#94A3B8"))
-                setPadding(0, 3.dp(), 0, 0)
-            }
-            card.addView(tView)
-            card.addView(sView)
-            grid.addView(card)
+            gridContainer.addView(rowLayout)
         }
-        container.addView(grid)
+        container.addView(gridContainer)
 
         val logCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -265,14 +271,14 @@ class MainActivity : AppCompatActivity() {
         }
         VoiceAgentForegroundService.logCallback = { entry ->
             runOnUiThread {
-                if (logLines.size >= 8) logLines.removeFirst()
-                logLines.addLast("• $entry")
+                if (logLines.size >= 8) logLines.removeAt(0)
+                logLines.add("• $entry")
                 logView.text = logLines.joinToString("\n")
             }
         }
         VoiceAgentForegroundService.faceStateCallback = { state, level ->
             runOnUiThread {
-                faceView.state = state
+                faceView.faceMode = state
                 faceView.audioLevel = level
             }
         }

@@ -54,7 +54,7 @@ class AgentAccessibilityService : AccessibilityService() {
 
     fun tapCoordinates(x: Float, y: Float): Boolean {
         val path = Path().apply { moveTo(x, y) }
-        return dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 80)).build(), null, null)
+        return dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0L, 80L)).build(), null, null)
     }
 
     private fun findNode(node: AccessibilityNodeInfo?, q: String, editOnly: Boolean = false): AccessibilityNodeInfo? {

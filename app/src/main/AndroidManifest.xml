@@ -27,11 +27,13 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
         </intent>
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
     </queries>
 
     <application
         android:allowBackup="true"
-        android:label="MetaWork 24/7 Agent"
+        android:label="Muse AI Agent"
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.NoActionBar">
 
@@ -54,13 +56,13 @@
             android:foregroundServiceType="microphone|specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="24/7 hands-free voice agent for screen navigation and task execution" />
+                android:value="Wake-word voice agent Muse for autonomous screen navigation and task execution" />
         </service>
 
         <service
             android:name=".AgentAccessibilityService"
             android:exported="true"
-            android:label="MetaWork Autonomous Screen Controller"
+            android:label="Muse Autonomous Screen Controller"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />

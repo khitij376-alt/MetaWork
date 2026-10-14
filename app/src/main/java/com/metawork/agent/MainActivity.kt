@@ -37,6 +37,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var logView: TextView
     private lateinit var micStatusPill: TextView
     private lateinit var accStatusPill: TextView
+    private lateinit var wakeBtn: Button
+    private lateinit var muteToggleBtn: Button
     private lateinit var accessibilityBannerBtn: Button
 
     private val logLines = mutableListOf<String>()
@@ -65,18 +67,18 @@ class MainActivity : AppCompatActivity() {
             setPadding(4.dp(), 0, 4.dp(), 12.dp())
         }
         val brandTitle = TextView(this).apply {
-            text = "METAWORK 24/7 AI"
-            textSize = 19f
+            text = "MUSE AI • VOICE AGENT"
+            textSize = 18f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#F8FAFC"))
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         statusBadge = TextView(this).apply {
-            text = "● LIVE 24/7"
-            textSize = 12f
+            text = "🌙 SLEEPING — Say 'Muse'"
+            textSize = 11f
             setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.parseColor("#10B981"))
-            background = roundedBg("#132F2B", "#10B981", 999.dp())
+            setTextColor(Color.parseColor("#818CF8"))
+            background = roundedBg("#1E1B4B", "#818CF8", 999.dp())
             setPadding(12.dp(), 6.dp(), 12.dp(), 6.dp())
         }
         headerRow.addView(brandTitle)
@@ -94,14 +96,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         faceView = AgentFaceView(this, isMiniOverlay = false).apply {
-            layoutParams = LinearLayout.LayoutParams(170.dp(), 170.dp())
+            layoutParams = LinearLayout.LayoutParams(165.dp(), 165.dp())
             setOnClickListener {
-                VoiceAgentForegroundService.instance?.triggerImmediateListen("I am listening. Tell me your command.")
+                VoiceAgentForegroundService.instance?.wakeUpMuse("Yes? Tell me your command.")
             }
         }
 
         val tapFaceHint = TextView(this).apply {
-            text = "TAP MY FACE OR SPEAK ANYTIME (HINDI / ENGLISH)"
+            text = "SAY "MUSE" OR TAP MY FACE TO WAKE ME UP"
             textSize = 11f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#38BDF8"))
@@ -110,16 +112,58 @@ class MainActivity : AppCompatActivity() {
         }
 
         transcriptView = TextView(this).apply {
-            text = "🤖 Agent: Initializing 24/7 voice brain..."
-            textSize = 15f
+            text = "🌙 Muse is Sleeping. Say "Muse" (e.g. 'Muse open WhatsApp and message Rahul hello')."
+            textSize = 14f
             setTextColor(Color.parseColor("#F1F5F9"))
             gravity = Gravity.CENTER
-            setPadding(8.dp(), 4.dp(), 8.dp(), 4.dp())
+            setPadding(8.dp(), 4.dp(), 8.dp(), 10.dp())
         }
+
+        val modeButtonRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+
+        wakeBtn = Button(this).apply {
+            text = "✨ Wake Muse"
+            textSize = 12f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Color.parseColor("#052E16"))
+            background = roundedBg("#10B981", "#059669", 10.dp())
+            setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                rightMargin = 6.dp()
+            }
+            setOnClickListener {
+                VoiceAgentForegroundService.instance?.wakeUpMuse("Yes? Tell me your command.")
+                refreshSystemPills()
+            }
+        }
+
+        muteToggleBtn = Button(this).apply {
+            text = "🔇 Mute Mic"
+            textSize = 12f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Color.parseColor("#F8FAFC"))
+            background = roundedBg("#1E293B", "#475569", 10.dp())
+            setPadding(10.dp(), 10.dp(), 10.dp(), 10.dp())
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                leftMargin = 6.dp()
+            }
+            setOnClickListener {
+                val muted = VoiceAgentForegroundService.instance?.toggleFullMicMute() ?: false
+                text = if (muted) "🌙 Enable 'Muse' Wake" else "🔇 Mute Mic"
+                refreshSystemPills()
+            }
+        }
+
+        modeButtonRow.addView(wakeBtn)
+        modeButtonRow.addView(muteToggleBtn)
 
         heroCard.addView(faceView)
         heroCard.addView(tapFaceHint)
         heroCard.addView(transcriptView)
+        heroCard.addView(modeButtonRow)
         container.addView(heroCard)
 
         val statusRow = LinearLayout(this).apply {
@@ -156,7 +200,7 @@ class MainActivity : AppCompatActivity() {
         container.addView(statusRow)
 
         accessibilityBannerBtn = Button(this).apply {
-            text = "⚡ TAP HERE TO ENABLE SCREEN CONTROLLER & FLOATING FACE"
+            text = "⚡ TAP HERE TO ENABLE MUSE SCREEN CONTROLLER & FLOATING FACE"
             textSize = 12f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#052E16"))
@@ -172,7 +216,7 @@ class MainActivity : AppCompatActivity() {
         container.addView(accessibilityBannerBtn)
 
         val gridHeader = TextView(this).apply {
-            text = "AUTONOMOUS TASK DASHBOARD (SPEAK OR TAP TO TEST)"
+            text = "MUSE TASK DASHBOARD (SAY 'MUSE ...' OR TAP TO RUN)"
             textSize = 12f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#94A3B8"))
@@ -188,14 +232,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         val quickTasks = listOf(
-            Triple("🚆 Book Train", "Say: 'Book a train on IRCTC'", "Book a train ticket on IRCTC"),
-            Triple("✈️ Book Flight", "Say: 'Book a flight to Mumbai'", "Book a flight to Mumbai"),
-            Triple("🚕 Book Uber Cab", "Say: 'Book an Uber to Station'", "Book an Uber to Railway Station"),
-            Triple("💬 Send WhatsApp", "Say: 'Send WhatsApp message'", "Send WhatsApp message saying Hello"),
-            Triple("▶️ Play YouTube", "Say: 'Play music on YouTube'", "Play trending music on YouTube"),
-            Triple("🚌 Book RedBus", "Say: 'Book a bus ticket'", "Book a bus on RedBus"),
-            Triple("🎬 Movie Tickets", "Say: 'Open BookMyShow'", "Book movie tickets on BookMyShow"),
-            Triple("🔍 Google Search", "Say: 'Search weather today'", "Search Google for weather today")
+            Triple("💬 Open WhatsApp", "Say: 'Muse, Rahul ko hello bhejo'", "Open WhatsApp"),
+            Triple("🚆 Book Train", "Say: 'Muse, book a train on IRCTC'", "Book a train ticket on IRCTC"),
+            Triple("✈️ Book Flight", "Say: 'Muse, book a flight to Mumbai'", "Book a flight to Mumbai"),
+            Triple("🚕 Book Uber Cab", "Say: 'Muse, book an Uber to Station'", "Book an Uber to Railway Station"),
+            Triple("▶️ Play YouTube", "Say: 'Muse, play music on YouTube'", "Play trending music on YouTube"),
+            Triple("🚌 Book RedBus", "Say: 'Muse, book a bus on RedBus'", "Book a bus on RedBus"),
+            Triple("🎬 Movie Tickets", "Say: 'Muse, open BookMyShow'", "Book movie tickets on BookMyShow"),
+            Triple("🔍 Google Search", "Say: 'Muse, Google search weather'", "Google search weather today")
         )
 
         for (i in quickTasks.indices step 2) {
@@ -244,14 +288,14 @@ class MainActivity : AppCompatActivity() {
             setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
         }
         val logTitle = TextView(this).apply {
-            text = "LIVE AGENT EXECUTION LOG"
+            text = "LIVE MUSE EXECUTION LOG"
             textSize = 11f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#10B981"))
             setPadding(0, 0, 0, 6.dp())
         }
         logView = TextView(this).apply {
-            text = "• Agent initialized. Speak any command or tap a task card above."
+            text = "• Muse initialized in Sleep Mode. Say 'Muse' or tap the face to wake."
             textSize = 12f
             typeface = Typeface.MONOSPACE
             setTextColor(Color.parseColor("#CBD5E1"))
@@ -264,7 +308,10 @@ class MainActivity : AppCompatActivity() {
         setContentView(scrollRoot)
 
         VoiceAgentForegroundService.statusCallback = { state ->
-            runOnUiThread { statusBadge.text = "● $state" }
+            runOnUiThread {
+                statusBadge.text = state
+                refreshSystemPills()
+            }
         }
         VoiceAgentForegroundService.transcriptCallback = { line ->
             runOnUiThread { transcriptView.text = line }
@@ -273,7 +320,8 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 if (logLines.size >= 8) logLines.removeAt(0)
                 logLines.add("• $entry")
-                logView.text = logLines.joinToString("\n")
+                logView.text = logLines.joinToString("
+")
             }
         }
         VoiceAgentForegroundService.faceStateCallback = { state, level ->
@@ -290,13 +338,27 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         activeInstance = this
         refreshSystemPills()
-        VoiceAgentForegroundService.instance?.startContinuousOnDeviceListening()
+        val svc = VoiceAgentForegroundService.instance
+        if (svc != null && !svc.isMicMuted) {
+            svc.startListeningCycle()
+        }
     }
 
     private fun refreshSystemPills() {
         val hasMic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        micStatusPill.text = if (hasMic) "🎙️ Mic: ACTIVE" else "🎙️ Mic: NEEDED"
-        micStatusPill.setTextColor(if (hasMic) Color.parseColor("#10B981") else Color.parseColor("#F59E0B"))
+        val isMuted = VoiceAgentForegroundService.instance?.isMicMuted == true
+        micStatusPill.text = when {
+            !hasMic -> "🎙️ Mic: NEEDED"
+            isMuted -> "🔇 Mic: MUTED"
+            else -> "🎙️ Wake: 'Muse'"
+        }
+        micStatusPill.setTextColor(
+            when {
+                !hasMic -> Color.parseColor("#F59E0B")
+                isMuted -> Color.parseColor("#94A3B8")
+                else -> Color.parseColor("#10B981")
+            }
+        )
 
         val hasAcc = AgentAccessibilityService.instance != null
         accStatusPill.text = if (hasAcc) "📱 Screen AI: ON" else "📱 Screen AI: OFF"

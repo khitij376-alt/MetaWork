@@ -18,11 +18,12 @@ android {
         applicationId = "com.metawork.agent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "3.0.0"
+        versionCode = 6
+        versionName = "3.0.1"
 
         val geminiKey = localProps.getProperty("GEMINI_API_KEY") ?: System.getenv("GEMINI_API_KEY") ?: ""
-        buildConfigField("String", "GEMINI_API_KEY", "\\"$geminiKey\\"")
+        val q = '"'
+        buildConfigField("String", "GEMINI_API_KEY", "$q$geminiKey$q")
     }
 
     buildFeatures {

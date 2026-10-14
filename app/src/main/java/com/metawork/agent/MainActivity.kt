@@ -103,7 +103,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val tapFaceHint = TextView(this).apply {
-            text = "SAY \"MUSE\" OR TAP MY FACE TO WAKE ME UP"
+            text = "SAY 'MUSE' OR TAP MY FACE TO WAKE ME UP"
             textSize = 11f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#38BDF8"))
@@ -112,7 +112,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         transcriptView = TextView(this).apply {
-            text = "🌙 Muse is Sleeping. Say \"Muse\" (e.g. 'Muse open WhatsApp and message Rahul hello')."
+            text = "🌙 Muse is Sleeping. Say 'Muse' (e.g. 'Muse open WhatsApp and message Rahul hello')."
             textSize = 14f
             setTextColor(Color.parseColor("#F1F5F9"))
             gravity = Gravity.CENTER
@@ -320,7 +320,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 if (logLines.size >= 8) logLines.removeAt(0)
                 logLines.add("• $entry")
-                logView.text = logLines.joinToString("\n")
+                logView.text = logLines.joinToString(10.toChar().toString())
             }
         }
         VoiceAgentForegroundService.faceStateCallback = { state, level ->

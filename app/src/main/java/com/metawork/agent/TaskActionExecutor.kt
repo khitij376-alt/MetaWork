@@ -3,18 +3,30 @@ package com.metawork.agent
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.ContactsContract
+import android.provider.Settings
 import android.telephony.SmsManager
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class TaskActionExecutor(private val context: Context) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
 
     private fun startActivitySafely(intent: Intent): Boolean {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -42,6 +54,7 @@ class TaskActionExecutor(private val context: Context) {
                     val service = AgentAccessibilityService.instance
                     result.put("status", if (service != null) "ok" else "error")
                     result.put("screen_elements", service?.dumpScreenTreeJson() ?: "[]")
+                    result.put("summary", service?.readVisibleScreenSummary() ?: "")
                 }
                 "click_element" -> {
                     val label = args.optString("label", "")
@@ -56,12 +69,26 @@ class TaskActionExecutor(private val context: Context) {
                     }
                     result.put("status", if (ok) "ok" else "failed")
                 }
+                "click_ordinal" -> {
+                    val index = args.optInt("index", 1)
+                    val ok = AgentAccessibilityService.instance?.clickByOrdinal(index) ?: false
+                    result.put("status", if (ok) "ok" else "failed")
+                }
+                "double_tap" -> {
+                    val ok = AgentAccessibilityService.instance?.doubleTapCenter() ?: false
+                    result.put("status", if (ok) "ok" else "failed")
+                }
+                "long_press" -> {
+                    val label = args.optString("label", "")
+                    val ok = AgentAccessibilityService.instance?.longPressElementByLabel(label) ?: false
+                    result.put("status", if (ok) "ok" else "failed")
+                }
                 "enter_text" -> {
                     val fieldHint = args.optString("field_hint", "")
                     val text = args.optString("text", "")
                     val submitAfter = args.optBoolean("click_send_after", false)
                     val service = AgentAccessibilityService.instance
-                    val typed = service?.inputTextIntoField(fieldHint, text) ?: false
+                    val typed = service?.inputTextIntoField(fieldHint, text, submitAfter) ?: false
                     if (typed && submitAfter) {
                         mainHandler.postDelayed({
                             if (service != null) {
@@ -71,17 +98,40 @@ class TaskActionExecutor(private val context: Context) {
                                     }
                                 }
                             }
-                        }, 500L)
+                        }, 550L)
                     }
                     result.put("status", if (typed) "ok" else "failed")
                 }
-                "scroll_screen" -> {
-                    val ok = AgentAccessibilityService.instance?.scrollScreen(args.optString("direction", "DOWN")) ?: false
+                "in_app_search" -> {
+                    val query = args.optString("query", "").trim()
+                    val ok = searchInsideActiveApp(query)
                     result.put("status", if (ok) "ok" else "failed")
                 }
-                "navigate_system" -> {
-                    val ok = AgentAccessibilityService.instance?.navigateGlobal(args.optString("action", "BACK")) ?: false
+                "scroll_screen" -> {
+                    val dir = args.optString("direction", "DOWN")
+                    val ok = AgentAccessibilityService.instance?.scrollScreen(dir) ?: false
                     result.put("status", if (ok) "ok" else "failed")
+                }
+                "auto_scroll" -> {
+                    val enable = args.optBoolean("enable", true)
+                    val dir = args.optString("direction", "DOWN")
+                    val service = AgentAccessibilityService.instance
+                    if (service != null) {
+                        if (enable) service.startAutoScroll(dir) else service.stopAutoScroll()
+                        result.put("status", "ok")
+                    } else {
+                        result.put("status", "failed")
+                    }
+                }
+                "navigate_system" -> {
+                    val action = args.optString("action", "BACK")
+                    val ok = AgentAccessibilityService.instance?.navigateGlobal(action) ?: false
+                    result.put("status", if (ok) "ok" else "failed")
+                }
+                "adjust_volume" -> {
+                    val dir = args.optString("direction", "UP")
+                    adjustDeviceVolume(dir)
+                    result.put("status", "ok")
                 }
                 "open_app_or_booking" -> {
                     val ok = launchBookingOrApp(
@@ -140,6 +190,119 @@ class TaskActionExecutor(private val context: Context) {
         return result
     }
 
+    private fun searchInsideActiveApp(query: String): Boolean {
+        val service = AgentAccessibilityService.instance ?: return false
+        if (query.isBlank()) return false
+
+        // Step 1: Try typing directly if an editable search field is already focused/visible
+        val typedDirectly = service.inputTextIntoField("Search", query, submitImeAfter = true)
+        if (typedDirectly) {
+            mainHandler.postDelayed({
+                service.pressImeEnterOnFocused()
+                service.clickElementByLabel(query)
+            }, 900L)
+            return true
+        }
+
+        // Step 2: Tap the app's search icon/bar, then type and submit
+        val clickedSearchIcon = service.clickUniversalSearchTrigger()
+        if (clickedSearchIcon) {
+            mainHandler.postDelayed({
+                service.inputTextIntoField("", query, submitImeAfter = true)
+                mainHandler.postDelayed({
+                    if (!service.pressImeEnterOnFocused()) {
+                        service.clickElementByLabel("Search")
+                    }
+                }, 700L)
+            }, 850L)
+            return true
+        }
+        return false
+    }
+
+    private fun adjustDeviceVolume(direction: String) {
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            when (direction.uppercase()) {
+                "UP" -> {
+                    am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
+                    am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
+                }
+                "DOWN" -> {
+                    am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
+                    am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
+                }
+                "MUTE" -> am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI)
+                "UNMUTE" -> am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, AudioManager.FLAG_SHOW_UI)
+            }
+        } catch (_: Throwable) {}
+    }
+
+    /**
+     * Uses Gemini 2.0 Flash to inspect the live Accessibility UI tree and execute custom screen goals.
+     */
+    fun runGeminiAutonomousScreenPlan(userGoal: String, apiKey: String): String? {
+        if (apiKey.isBlank()) return null
+        val service = AgentAccessibilityService.instance ?: return null
+        return try {
+            val uiTree = service.dumpScreenTreeJson()
+            val prompt = "You are Muse, an Android Accessibility Screen Controller. " +
+                "User command: '" + userGoal + "'. " +
+                "Current visible screen UI elements JSON: " + uiTree + ". " +
+                "Return ONLY a valid JSON object with fields: " +
+                "action ('click'|'type'|'scroll'|'tap_xy'|'navigate'|'none'), " +
+                "target (label or text or direction), " +
+                "value (text to type if action is type), " +
+                "x (number if tap_xy), y (number if tap_xy), " +
+                "spoken (short 1-sentence confirmation)."
+
+            val bodyJson = JSONObject().apply {
+                put("contents", JSONArray().put(JSONObject().apply {
+                    put("parts", JSONArray().put(JSONObject().put("text", prompt)))
+                }))
+                put("generationConfig", JSONObject().put("responseMimeType", "application/json"))
+            }
+
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$apiKey"
+            val req = Request.Builder()
+                .url(url)
+                .post(bodyJson.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val raw = resp.body?.string().orEmpty()
+                val root = JSONObject(raw)
+                val textPart = root.optJSONArray("candidates")
+                    ?.optJSONObject(0)
+                    ?.optJSONObject("content")
+                    ?.optJSONArray("parts")
+                    ?.optJSONObject(0)
+                    ?.optString("text")
+                    .orEmpty()
+                if (textPart.isBlank()) return null
+
+                val plan = JSONObject(textPart)
+                val act = plan.optString("action", "none")
+                val target = plan.optString("target", "")
+                val value = plan.optString("value", "")
+                val spoken = plan.optString("spoken", "Done.")
+
+                when (act) {
+                    "click" -> service.clickElementByLabel(target)
+                    "type" -> service.inputTextIntoField(target, value, submitImeAfter = true)
+                    "scroll" -> service.scrollScreen(target.ifBlank { "DOWN" })
+                    "tap_xy" -> service.tapCoordinates(plan.optDouble("x", 500.0).toFloat(), plan.optDouble("y", 500.0).toFloat())
+                    "navigate" -> service.navigateGlobal(target.ifBlank { "BACK" })
+                    else -> return null
+                }
+                spoken
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     private fun getWhatsAppPackage(): String? {
         val pm = context.packageManager
         val candidates = listOf("com.whatsapp", "com.whatsapp.w4b")
@@ -162,7 +325,6 @@ class TaskActionExecutor(private val context: Context) {
         val waPkg = getWhatsAppPackage()
         val msgText = message.ifBlank { "Hello" }
 
-        // Case 1: User only asked to open WhatsApp without specifying a recipient
         if (recipient.isBlank()) {
             if (waPkg != null) {
                 val launch = context.packageManager.getLaunchIntentForPackage(waPkg)
@@ -171,7 +333,6 @@ class TaskActionExecutor(private val context: Context) {
             return false
         }
 
-        // Case 2: Try resolving phone number from Contacts (or direct digits)
         val rawPhone = resolvePhoneNumber(recipient) ?: recipient.filter { it.isDigit() }
         val formattedPhone = formatWhatsAppPhone(rawPhone)
 
@@ -186,7 +347,6 @@ class TaskActionExecutor(private val context: Context) {
             )
             if (launched) {
                 val alreadyClickedSend = AtomicBoolean(false)
-                // Try clicking Send once chat window finishes opening
                 for (delayMs in listOf(1400L, 2400L, 3500L)) {
                     mainHandler.postDelayed({
                         if (!alreadyClickedSend.get()) {
@@ -202,28 +362,23 @@ class TaskActionExecutor(private val context: Context) {
             }
         }
 
-        // Case 3: Contact name not found in phonebook -> Search contact inside WhatsApp UI via AccessibilityService
         if (waPkg != null) {
             val launchIntent = context.packageManager.getLaunchIntentForPackage(waPkg)
             if (launchIntent != null && startActivitySafely(launchIntent)) {
                 VoiceAgentForegroundService.logCallback?.invoke("🔍 Searching '$recipient' inside WhatsApp UI...")
-                // Step 1: Tap WhatsApp search icon
                 mainHandler.postDelayed({
-                    AgentAccessibilityService.instance?.clickWhatsAppSearchButton()
+                    AgentAccessibilityService.instance?.clickUniversalSearchTrigger()
                 }, 1200L)
-                // Step 2: Type contact name into search bar
                 mainHandler.postDelayed({
-                    AgentAccessibilityService.instance?.inputTextIntoField("", recipient)
+                    AgentAccessibilityService.instance?.inputTextIntoField("", recipient, submitImeAfter = false)
                 }, 2100L)
-                // Step 3: Click the matching contact row in search results
                 mainHandler.postDelayed({
                     AgentAccessibilityService.instance?.clickContactRowInList(recipient)
                 }, 3300L)
-                // Step 4: Enter message text into chat box
                 mainHandler.postDelayed({
                     val service = AgentAccessibilityService.instance
                     if (service != null) {
-                        val typed = service.inputTextIntoField("Message", msgText) || service.inputTextIntoField("", msgText)
+                        val typed = service.inputTextIntoField("Message", msgText, false) || service.inputTextIntoField("", msgText, false)
                         if (typed) {
                             mainHandler.postDelayed({
                                 service.clickWhatsAppSendButton()
@@ -240,7 +395,6 @@ class TaskActionExecutor(private val context: Context) {
 
     private fun launchBookingOrApp(category: String, origin: String, destination: String, appName: String): Boolean {
         val encodedDest = URLEncoder.encode(destination.ifBlank { "New Delhi" }, "UTF-8")
-        val encodedOrig = URLEncoder.encode(origin.ifBlank { "Patna" }, "UTF-8")
 
         when (category.lowercase()) {
             "cab", "ride", "uber" -> {
@@ -278,7 +432,6 @@ class TaskActionExecutor(private val context: Context) {
                 return startActivitySafely(ytIntent)
             }
             "search", "google" -> {
-                // Only called when the user EXPLICITLY asks for a Google Search
                 val searchIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=$encodedDest"))
                 return startActivitySafely(searchIntent)
             }
@@ -286,7 +439,10 @@ class TaskActionExecutor(private val context: Context) {
                 val query = appName.ifBlank { destination }.lowercase().trim()
                 if (query.isBlank()) return false
 
-                // Common known package aliases first
+                if (query == "settings" || query == "setting") {
+                    return startActivitySafely(Intent(Settings.ACTION_SETTINGS))
+                }
+
                 val knownPackages = mapOf(
                     "whatsapp" to "com.whatsapp",
                     "youtube" to "com.google.android.youtube",
@@ -304,8 +460,8 @@ class TaskActionExecutor(private val context: Context) {
                     "amazon" to "in.amazon.mShop.android.shopping",
                     "zomato" to "com.application.zomato",
                     "swiggy" to "in.swiggy.android",
-                    "settings" to "com.android.settings",
-                    "camera" to "com.android.camera"
+                    "camera" to "com.android.camera",
+                    "play store" to "com.android.vending"
                 )
                 for ((alias, pkg) in knownPackages) {
                     if (query.contains(alias)) {
@@ -314,7 +470,6 @@ class TaskActionExecutor(private val context: Context) {
                     }
                 }
 
-                // Scan all installed applications on the user's phone
                 val pm = context.packageManager
                 val apps = pm.getInstalledApplications(0)
                 for (app in apps) {
@@ -324,7 +479,6 @@ class TaskActionExecutor(private val context: Context) {
                         if (launch != null && startActivitySafely(launch)) return true
                     }
                 }
-                // DO NOT fall back to Google Search when an app is not found!
                 return false
             }
         }

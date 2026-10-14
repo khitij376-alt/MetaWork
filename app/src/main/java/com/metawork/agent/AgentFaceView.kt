@@ -10,18 +10,9 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
-/**
- * Animated Face for "Muse" Voice Agent (used on Main Dashboard & Floating Screen Overlay).
- * States:
- * - "SLEEP"     -> Indigo/Slate resting face with sleeping eyes (- -) waiting for "Muse" wake word
- * - "MUTED"     -> Dim Gray face when microphone is muted (Tap face to wake)
- * - "LISTENING" -> Glowing Cyan awake face actively listening for user command
- * - "SPEAKING"  -> Emerald Green animated waveform mouth while Muse speaks
- * - "EXECUTING" -> Amber Gold radar rings while Muse clicks/types inside apps
- */
 class AgentFaceView(context: Context, private val isMiniOverlay: Boolean = false) : View(context) {
 
-    var faceMode: String = "SLEEP"
+    var faceMode: String = "STANDBY"
         set(value) {
             field = value
             postInvalidateOnAnimation()
@@ -66,28 +57,28 @@ class AgentFaceView(context: Context, private val isMiniOverlay: Boolean = false
             "SPEAKING" -> Color.parseColor("#10B981")
             "EXECUTING" -> Color.parseColor("#F59E0B")
             "LISTENING" -> Color.parseColor("#38BDF8")
-            "MUTED" -> Color.parseColor("#475569")
-            else -> Color.parseColor("#818CF8") // SLEEP (Waiting for "Muse")
+            "WAKE_WORD" -> Color.parseColor("#A855F7")
+            else -> Color.parseColor("#6366F1") // STANDBY (Zero Mic Lag — Tap to Speak)
         }
 
-        val isSleepingOrMuted = (faceMode == "SLEEP" || faceMode == "MUTED")
-        val pulse = if (isSleepingOrMuted) 1f + 0.015f * sin(tick) else 1f + 0.045f * sin(tick * 2.2f)
+        val isResting = (faceMode == "STANDBY" || faceMode == "SLEEP" || faceMode == "MUTED")
+        val pulse = if (isResting) 1f + 0.015f * sin(tick) else 1f + 0.05f * sin(tick * 2.2f)
 
         glowPaint.color = primaryColor
-        glowPaint.alpha = if (isSleepingOrMuted) 30 else 65
+        glowPaint.alpha = if (isResting) 35 else 75
         canvas.drawCircle(cx, cy, radius * pulse, glowPaint)
         canvas.drawCircle(cx, cy, radius, bgPaint)
 
         ringPaint.color = primaryColor
-        ringPaint.alpha = if (isSleepingOrMuted) 130 else 230
+        ringPaint.alpha = if (isResting) 150 else 235
         arcRect.set(cx - radius, cy - radius, cx + radius, cy + radius)
-        val speed = if (isSleepingOrMuted) 6f else 26f
+        val speed = if (isResting) 5f else 28f
         val startAngle = (tick * speed) % 360f
-        canvas.drawArc(arcRect, startAngle, 110f, false, ringPaint)
-        canvas.drawArc(arcRect, startAngle + 180f, 110f, false, ringPaint)
+        canvas.drawArc(arcRect, startAngle, 115f, false, ringPaint)
+        canvas.drawArc(arcRect, startAngle + 180f, 115f, false, ringPaint)
 
         featurePaint.color = primaryColor
-        val isBlinking = isSleepingOrMuted || (sin(tick * 0.45f) > 0.96f)
+        val isBlinking = (sin(tick * 0.42f) > 0.96f)
         val eyeOffsetX = radius * 0.36f
         val eyeCenterY = cy - radius * 0.16f
         val eyeW = radius * 0.22f
@@ -101,7 +92,7 @@ class AgentFaceView(context: Context, private val isMiniOverlay: Boolean = false
 
         if (!isBlinking && !isMiniOverlay) {
             featurePaint.color = Color.WHITE
-            featurePaint.alpha = 210
+            featurePaint.alpha = 215
             val lookShift = sin(tick * 0.7f) * (eyeW * 0.12f)
             canvas.drawCircle(cx - eyeOffsetX + lookShift, eyeCenterY - eyeH * 0.15f, eyeW * 0.14f, featurePaint)
             canvas.drawCircle(cx + eyeOffsetX + lookShift, eyeCenterY - eyeH * 0.15f, eyeW * 0.14f, featurePaint)
@@ -117,10 +108,10 @@ class AgentFaceView(context: Context, private val isMiniOverlay: Boolean = false
         val startX = cx - ((barCount * barW + (barCount - 1) * gap) / 2f)
 
         val activeWave = when (faceMode) {
-            "SPEAKING" -> 0.35f + 0.65f * abs(sin(tick * 4.5f))
-            "EXECUTING" -> 0.45f * abs(cos(tick * 5.0f))
-            "LISTENING" -> 0.22f + (audioLevel * 0.75f) * abs(sin(tick * 3.2f))
-            else -> 0.08f
+            "SPEAKING" -> 0.38f + 0.62f * abs(sin(tick * 4.5f))
+            "EXECUTING" -> 0.48f * abs(cos(tick * 5.2f))
+            "LISTENING" -> 0.25f + (audioLevel * 0.75f) * abs(sin(tick * 3.4f))
+            else -> 0.10f
         }
 
         for (i in 0 until barCount) {

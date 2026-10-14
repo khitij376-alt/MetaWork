@@ -38,7 +38,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var micStatusPill: TextView
     private lateinit var accStatusPill: TextView
     private lateinit var wakeBtn: Button
-    private lateinit var muteToggleBtn: Button
+    private lateinit var handsFreeToggleBtn: Button
     private lateinit var accessibilityBannerBtn: Button
 
     private val logLines = mutableListOf<String>()
@@ -67,18 +67,18 @@ class MainActivity : AppCompatActivity() {
             setPadding(4.dp(), 0, 4.dp(), 12.dp())
         }
         val brandTitle = TextView(this).apply {
-            text = "MUSE AI • VOICE AGENT"
+            text = "MUSE AI v4.0 • PRO"
             textSize = 18f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#F8FAFC"))
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         statusBadge = TextView(this).apply {
-            text = "🌙 SLEEPING — Say 'Muse'"
+            text = "⚡ ZERO-LAG READY"
             textSize = 11f
             setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.parseColor("#818CF8"))
-            background = roundedBg("#1E1B4B", "#818CF8", 999.dp())
+            setTextColor(Color.parseColor("#10B981"))
+            background = roundedBg("#052E16", "#10B981", 999.dp())
             setPadding(12.dp(), 6.dp(), 12.dp(), 6.dp())
         }
         headerRow.addView(brandTitle)
@@ -98,12 +98,12 @@ class MainActivity : AppCompatActivity() {
         faceView = AgentFaceView(this, isMiniOverlay = false).apply {
             layoutParams = LinearLayout.LayoutParams(165.dp(), 165.dp())
             setOnClickListener {
-                VoiceAgentForegroundService.instance?.wakeUpMuse("Yes? Tell me your command.")
+                VoiceAgentForegroundService.instance?.wakeUpMuse(null)
             }
         }
 
         val tapFaceHint = TextView(this).apply {
-            text = "SAY 'MUSE' OR TAP MY FACE TO WAKE ME UP"
+            text = "TAP FLOATING MUSE FACE ON ANY APP TO COMMAND (ZERO MIC LAG)"
             textSize = 11f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#38BDF8"))
@@ -112,7 +112,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         transcriptView = TextView(this).apply {
-            text = "🌙 Muse is Sleeping. Say 'Muse' (e.g. 'Muse open WhatsApp and message Rahul hello')."
+            text = "⚡ Zero-Lag Mode: Mic stays OFF when idle so your phone never makes laggy mic sounds. Tap my face anytime to speak!"
             textSize = 14f
             setTextColor(Color.parseColor("#F1F5F9"))
             gravity = Gravity.CENTER
@@ -125,7 +125,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         wakeBtn = Button(this).apply {
-            text = "✨ Wake Muse"
+            text = "🎙️ Tap to Speak Command"
             textSize = 12f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#052E16"))
@@ -135,13 +135,13 @@ class MainActivity : AppCompatActivity() {
                 rightMargin = 6.dp()
             }
             setOnClickListener {
-                VoiceAgentForegroundService.instance?.wakeUpMuse("Yes? Tell me your command.")
+                VoiceAgentForegroundService.instance?.wakeUpMuse(null)
                 refreshSystemPills()
             }
         }
 
-        muteToggleBtn = Button(this).apply {
-            text = "🔇 Mute Mic"
+        handsFreeToggleBtn = Button(this).apply {
+            text = "⚡ Mode: Zero-Lag Tap"
             textSize = 12f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#F8FAFC"))
@@ -151,14 +151,14 @@ class MainActivity : AppCompatActivity() {
                 leftMargin = 6.dp()
             }
             setOnClickListener {
-                val muted = VoiceAgentForegroundService.instance?.toggleFullMicMute() ?: false
-                text = if (muted) "🌙 Enable 'Muse' Wake" else "🔇 Mute Mic"
+                val handsFree = VoiceAgentForegroundService.instance?.toggleHandsFreeWakeMode() ?: false
+                text = if (handsFree) "🎙️ Mode: 'Muse' Wake" else "⚡ Mode: Zero-Lag Tap"
                 refreshSystemPills()
             }
         }
 
         modeButtonRow.addView(wakeBtn)
-        modeButtonRow.addView(muteToggleBtn)
+        modeButtonRow.addView(handsFreeToggleBtn)
 
         heroCard.addView(faceView)
         heroCard.addView(tapFaceHint)
@@ -173,7 +173,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         micStatusPill = TextView(this).apply {
-            text = "🎙️ Mic: Checking..."
+            text = "🎙️ Audio: Zero-Lag"
             textSize = 12f
             setTextColor(Color.WHITE)
             background = roundedBg("#111827", "#334155", 12.dp())
@@ -183,7 +183,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         accStatusPill = TextView(this).apply {
-            text = "📱 Screen AI: Checking..."
+            text = "📱 Screen Control: Checking..."
             textSize = 12f
             setTextColor(Color.WHITE)
             background = roundedBg("#111827", "#334155", 12.dp())
@@ -200,7 +200,7 @@ class MainActivity : AppCompatActivity() {
         container.addView(statusRow)
 
         accessibilityBannerBtn = Button(this).apply {
-            text = "⚡ TAP HERE TO ENABLE MUSE SCREEN CONTROLLER & FLOATING FACE"
+            text = "⚡ STEP 1: TAP HERE & TURN ON 'MUSE AUTONOMOUS SCREEN CONTROLLER' FOR FULL SCREEN ACCESS"
             textSize = 12f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#052E16"))
@@ -216,7 +216,7 @@ class MainActivity : AppCompatActivity() {
         container.addView(accessibilityBannerBtn)
 
         val gridHeader = TextView(this).apply {
-            text = "MUSE TASK DASHBOARD (SAY 'MUSE ...' OR TAP TO RUN)"
+            text = "ADVANCED SCREEN CONTROL COMMANDS (SPEAK OR TAP TO TEST)"
             textSize = 12f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#94A3B8"))
@@ -232,14 +232,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         val quickTasks = listOf(
-            Triple("💬 Open WhatsApp", "Say: 'Muse, Rahul ko hello bhejo'", "Open WhatsApp"),
-            Triple("🚆 Book Train", "Say: 'Muse, book a train on IRCTC'", "Book a train ticket on IRCTC"),
-            Triple("✈️ Book Flight", "Say: 'Muse, book a flight to Mumbai'", "Book a flight to Mumbai"),
-            Triple("🚕 Book Uber Cab", "Say: 'Muse, book an Uber to Station'", "Book an Uber to Railway Station"),
-            Triple("▶️ Play YouTube", "Say: 'Muse, play music on YouTube'", "Play trending music on YouTube"),
-            Triple("🚌 Book RedBus", "Say: 'Muse, book a bus on RedBus'", "Book a bus on RedBus"),
-            Triple("🎬 Movie Tickets", "Say: 'Muse, open BookMyShow'", "Book movie tickets on BookMyShow"),
-            Triple("🔍 Google Search", "Say: 'Muse, Google search weather'", "Google search weather today")
+            Triple("💬 WhatsApp Message", "Say: 'Rahul ko hello bhejo'", "Open WhatsApp"),
+            Triple("▶️ YouTube + Play", "Say: 'Open YouTube and search Arijit Singh and click first video'", "Open YouTube and search Arijit Singh"),
+            Triple("🔄 Auto-Scroll Reels", "Say: 'Auto scroll down' (Tap face to stop)", "Auto scroll down"),
+            Triple("📖 Read My Screen", "Say: 'Read screen' / 'Kya likha hai'", "Read screen"),
+            Triple("📸 Take Screenshot", "Say: 'Take screenshot'", "Take screenshot"),
+            Triple("🚆 Book IRCTC Train", "Say: 'Book a train on IRCTC'", "Book a train ticket on IRCTC"),
+            Triple("🚕 Book Uber Cab", "Say: 'Book an Uber to Station'", "Book an Uber to Railway Station"),
+            Triple("🔍 Google Search", "Say: 'Google search weather'", "Google search weather today")
         )
 
         for (i in quickTasks.indices step 2) {
@@ -295,7 +295,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 6.dp())
         }
         logView = TextView(this).apply {
-            text = "• Muse initialized in Sleep Mode. Say 'Muse' or tap the face to wake."
+            text = "• Muse v4.0 Ready (Zero Mic Lag). Enable Screen Controller above, then tap floating Muse face on any app!"
             textSize = 12f
             typeface = Typeface.MONOSPACE
             setTextColor(Color.parseColor("#CBD5E1"))
@@ -337,30 +337,26 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         activeInstance = this
         refreshSystemPills()
-        val svc = VoiceAgentForegroundService.instance
-        if (svc != null && !svc.isMicMuted) {
-            svc.startListeningCycle()
-        }
     }
 
     private fun refreshSystemPills() {
         val hasMic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        val isMuted = VoiceAgentForegroundService.instance?.isMicMuted == true
+        val handsFree = VoiceAgentForegroundService.instance?.handsFreeWakeMode == true
         micStatusPill.text = when {
             !hasMic -> "🎙️ Mic: NEEDED"
-            isMuted -> "🔇 Mic: MUTED"
-            else -> "🎙️ Wake: 'Muse'"
+            handsFree -> "🎙️ Wake: 'Muse'"
+            else -> "⚡ Audio: Zero-Lag"
         }
         micStatusPill.setTextColor(
             when {
                 !hasMic -> Color.parseColor("#F59E0B")
-                isMuted -> Color.parseColor("#94A3B8")
+                handsFree -> Color.parseColor("#A855F7")
                 else -> Color.parseColor("#10B981")
             }
         )
 
         val hasAcc = AgentAccessibilityService.instance != null
-        accStatusPill.text = if (hasAcc) "📱 Screen AI: ON" else "📱 Screen AI: OFF"
+        accStatusPill.text = if (hasAcc) "📱 Screen Control: ON" else "📱 Screen Control: OFF"
         accStatusPill.setTextColor(if (hasAcc) Color.parseColor("#10B981") else Color.parseColor("#F59E0B"))
         accessibilityBannerBtn.visibility = if (hasAcc) View.GONE else View.VISIBLE
     }

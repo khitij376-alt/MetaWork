@@ -406,7 +406,7 @@ class TaskActionExecutor(private val context: Context) {
                     put("generationConfig", JSONObject().put("responseMimeType", "application/json"))
                 }
 
-                val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$apiKey"
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=$apiKey"
                 val req = Request.Builder()
                     .url(url)
                     .post(bodyJson.toString().toRequestBody("application/json".toMediaType()))

@@ -673,7 +673,7 @@ class AgentAccessibilityService : AccessibilityService() {
             val editables = mutableListOf<AccessibilityNodeInfo>()
             collectAllEditableNodes(root, editables, 0)
 
-            val node = if (targetFieldQuery.equals("Message", ignoreCase = true)) {
+            val node = (if (targetFieldQuery.equals("Message", ignoreCase = true)) {
                 findNodeByViewId(root, "com.whatsapp:id/entry")
                     ?: findNodeByViewId(root, "com.whatsapp.w4b:id/entry")
                     ?: findBestMatchingNode(root, "Message", requireEditable = true)
@@ -684,7 +684,7 @@ class AgentAccessibilityService : AccessibilityService() {
                     ?: editables.firstOrNull()
             } else {
                 root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: editables.firstOrNull()
-            } ?: return@runOnMainSync false
+            }) ?: return@runOnMainSync false
 
             setNodeTextGuaranteed(node, value, submitImeAfter)
         } ?: false

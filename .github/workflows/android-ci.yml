@@ -29,7 +29,7 @@ jobs:
       - name: Assemble Debug APK
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: gradle testDebugUnitTest assembleDebug --no-daemon --stacktrace
 
       - name: Upload Compiled MetaWork Debug APK
         uses: actions/upload-artifact@v4

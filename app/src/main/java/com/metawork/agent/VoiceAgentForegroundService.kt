@@ -69,7 +69,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
     private var isListeningActive = false
 
     @Volatile
-    var handsFreeWakeMode: Boolean = false
+    var handsFreeWakeMode: Boolean = true
         private set
     @Volatile
     var isAwakeForCommand: Boolean = false
@@ -95,11 +95,13 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        handsFreeWakeMode = getSharedPreferences("muse_prefs", MODE_PRIVATE)
+            .getBoolean("hands_free_wake_mode", true)
         try {
             val chan = NotificationChannel(CHANNEL_ID, "Muse AI Thinking Controller", NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java).createNotificationChannel(chan)
 
-            val notification = buildNotification("🧠 Muse v8.0 Ready — Tap Floating Face on Any App")
+            val notification = buildNotification("🎙️ Muse is waiting for its wake word")
             val hasMicPerm = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && hasMicPerm) {
@@ -232,6 +234,9 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
 
     fun toggleHandsFreeWakeMode(): Boolean {
         handsFreeWakeMode = !handsFreeWakeMode
+        getSharedPreferences("muse_prefs", MODE_PRIVATE).edit()
+            .putBoolean("hands_free_wake_mode", handsFreeWakeMode)
+            .apply()
         enterStandbyMode()
         return handsFreeWakeMode
     }
@@ -277,7 +282,19 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
         try {
             speechRecognizer?.cancel()
             speechRecognizer?.destroy()
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext).apply {
+            val onDeviceAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                SpeechRecognizer.isOnDeviceRecognitionAvailable(applicationContext)
+            val recognizer = if (onDeviceAvailable) {
+                try {
+                    SpeechRecognizer.createOnDeviceSpeechRecognizer(applicationContext)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "On-device recognizer unavailable; falling back to device speech service", e)
+                    SpeechRecognizer.createSpeechRecognizer(applicationContext)
+                }
+            } else {
+                SpeechRecognizer.createSpeechRecognizer(applicationContext)
+            }
+            speechRecognizer = recognizer.apply {
                 setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(params: Bundle?) {
                         isListeningActive = true
@@ -432,6 +449,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
                     putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 5500L)
@@ -528,7 +546,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
             Regex("[ ]+(?:whatsapp[ ]+message[ ]+bhejo|message[ ]+bhejo|msg[ ]+bhejo|whatsapp[ ]+karo|message[ ]+karo|msg[ ]+karo|bhejo|bhego|bhej[ ]+do|send[ ]+karo|on[ ]+whatsapp)$", RegexOption.IGNORE_CASE),
             ""
         )
-        return msg.trim().ifBlank { "Hello" }
+        return msg.trim()
     }
 
     private fun splitChainedCommands(spoken: String): List<String> {
@@ -538,6 +556,9 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
             return listOf(spoken.trim())
         }
         if ((lower.contains("username") || lower.contains("email")) && lower.contains("password")) {
+            return listOf(spoken.trim())
+        }
+        if (VoiceCommandParser.isAccountSignupRequest(lower)) {
             return listOf(spoken.trim())
         }
         if (lower.contains("youtube") && lower.contains("play") && !lower.contains("this video") && !lower.contains("scroll")) {
@@ -557,6 +578,23 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
 
     fun handleSpokenCommand(spoken: String) {
         val lower = spoken.lowercase(Locale.ROOT).trim()
+        if (lower in setOf("stop listening", "disable wake word", "wake word off", "listening band", "sunna band karo")) {
+            AgentAccessibilityService.instance?.stopAutoScroll()
+            handsFreeWakeMode = false
+            getSharedPreferences("muse_prefs", MODE_PRIVATE).edit()
+                .putBoolean("hands_free_wake_mode", false)
+                .apply()
+            speakOut("Wake-word listening is off. Tap the Muse face when you want me.", keepAwakeAfter = false)
+            return
+        }
+        if (lower in setOf("enable wake word", "always listen", "wake word on", "hamesha suno")) {
+            handsFreeWakeMode = true
+            getSharedPreferences("muse_prefs", MODE_PRIVATE).edit()
+                .putBoolean("hands_free_wake_mode", true)
+                .apply()
+            speakOut("Wake-word mode is on. Say Muse followed by your request.", keepAwakeAfter = false)
+            return
+        }
         if (lower == "stop" || lower == "sleep" || lower == "bas" || lower == "go to sleep" || lower == "thank you") {
             AgentAccessibilityService.instance?.stopAutoScroll()
             speakOut("Okay, going to standby.", keepAwakeAfter = false)
@@ -640,6 +678,26 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                 logCallback?.invoke("👤 Entering username/email: '$userVal'")
                 val res = taskExecutor.executeToolCall("enter_username", JSONObject().put("username", userVal))
                 if (res.optString("status") == "ok") "Entered $userVal." else "Could not find username or email field on screen."
+            }
+
+            // Route account creation to the requested app, never to a generic web search.
+            VoiceCommandParser.isAccountSignupRequest(lower) -> {
+                val appName = VoiceCommandParser.accountSignupTarget(spoken)
+                if (appName == null) {
+                    "Which app do you want to create an account for?"
+                } else {
+                    val opened = taskExecutor.executeToolCall(
+                        "open_app_or_booking",
+                        JSONObject().put("category", "app").put("app_name", appName)
+                    )
+                    if (opened.optString("status") != "ok") {
+                        "I could not find $appName installed on this phone."
+                    } else {
+                        delay(900L)
+                        val guidedResult = taskExecutor.runGeminiAutonomousScreenPlan(spoken)
+                        guidedResult ?: "Opened $appName. Enable Screen Controller and add a Gemini key if you want me to guide the visible signup steps. I cannot bypass OTPs or CAPTCHAs."
+                    }
+                }
             }
 
             // 4. Open Website URL ("open website github.com", "go to flipkart.com")
@@ -828,23 +886,30 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
 
             // 15. WhatsApp Messaging (Exact Message Extraction!)
             lower.contains("whatsapp") || lower.contains("bhejo") || lower.contains("bhego") || (lower.contains("message") && !lower.contains("sms")) -> {
-                val (recipient, msg) = parseWhatsAppIntent(spoken)
+                val (recipient, msg) = VoiceCommandParser.parseWhatsAppIntent(spoken)
                 if (recipient.isBlank()) {
                     taskExecutor.executeToolCall("open_app_or_booking", JSONObject().put("category", "app").put("app_name", "whatsapp"))
                     "Opened WhatsApp."
+                } else if (msg.isBlank()) {
+                    "I found $recipient, but you did not say the message text. Nothing was sent. Say the exact message, for example: Muse, Rahul ko ‘I will be late’ bhejo."
                 } else {
                     logCallback?.invoke("💬 WhatsApp -> To: '$recipient', Msg: '$msg'")
-                    taskExecutor.executeToolCall("send_whatsapp_message", JSONObject().put("recipient", recipient).put("message", msg))
-                    "Sending '$msg' to $recipient on WhatsApp."
+                    val result = taskExecutor.executeToolCall("send_whatsapp_message", JSONObject().put("recipient", recipient).put("message", msg))
+                    if (result.optString("status") == "ok") "Sending '$msg' to $recipient on WhatsApp."
+                    else "I could not send that WhatsApp message. Check that WhatsApp and Screen Controller are available."
                 }
             }
 
             // 16. SMS, Calls & Bookings
             lower.contains("sms ") || lower.contains("text message") -> {
                 val recipient = spoken.substringAfter("to ", "").substringBefore(" saying").substringBefore(" ko ").trim()
-                val msg = cleanWhatsAppMessageBody(spoken.substringAfter(recipient, "Hello"))
-                taskExecutor.executeToolCall("send_sms", JSONObject().put("recipient", recipient).put("message", msg))
-                "Sent SMS to $recipient."
+                val msg = if (recipient.isBlank()) "" else cleanWhatsAppMessageBody(spoken.substringAfter(recipient, ""))
+                val result = taskExecutor.executeToolCall("send_sms", JSONObject().put("recipient", recipient).put("message", msg))
+                when (result.optString("status")) {
+                    "ok" -> "Sent SMS to $recipient."
+                    "drafted" -> "Opened an SMS draft to $recipient. Review it and tap Send."
+                    else -> "Could not send the SMS. Check the recipient, message text, and SMS permission."
+                }
             }
             lower.contains("train") || lower.contains("irctc") || lower.contains("rail") -> {
                 taskExecutor.executeToolCall("open_app_or_booking", JSONObject().put("category", "train"))
@@ -868,25 +933,19 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                 taskExecutor.executeToolCall("open_app_or_booking", JSONObject().put("category", "movie"))
                 "Opening BookMyShow."
             }
-            lower.contains("call ") || lower.contains("dial ") || lower.contains("phone lagao") -> {
-                val target = lower.substringAfter("call ", "").substringAfter("dial ", "").replace("ko", "").trim()
+            lower.contains("call ") || lower.contains("dial ") || lower.contains("phone lagao") ||
+                lower.contains("phone karo") || lower.contains("phone kar do") || lower.contains("call karo") ||
+                lower.contains("call kar do") || lower.contains("dial karo") || lower.contains("phone milao") -> {
+                val target = VoiceCommandParser.extractCallTarget(spoken)
                 val res = taskExecutor.executeToolCall("make_phone_call", JSONObject().put("recipient", target))
-                if (res.optString("status") == "ok") "Calling $target." else "Could not find contact $target."
+                when (res.optString("status")) {
+                    "ok" -> "Starting a call to $target."
+                    "dialer" -> "Opened the phone dialer for $target. Tap Call if Android asks you to confirm."
+                    else -> "Could not find contact $target or open the phone app."
+                }
             }
             lower.contains("youtube") || lower.startsWith("play ") || lower.contains(" play ") -> {
-                val query = lower
-                    .replace("open youtube and", "")
-                    .replace("open youtube", "")
-                    .replace("launch youtube", "")
-                    .replace("youtube kholo", "")
-                    .replace("kholo", "")
-                    .replace("open", "")
-                    .replace("play", "")
-                    .replace("on youtube", "")
-                    .replace("youtube", "")
-                    .replace("app", "")
-                    .replace("please", "")
-                    .trim()
+                val query = VoiceCommandParser.extractYouTubeQuery(spoken)
                 if (query.isEmpty()) {
                     // User said "Open YouTube" or "YouTube kholo" -> Launch the native YouTube app!
                     taskExecutor.executeToolCall("open_app_or_booking", JSONObject().put("category", "youtube").put("destination", ""))
@@ -903,7 +962,8 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                                 delay(350L)
                                 if (service.getActivePackageName().contains("youtube")) {
                                     delay(1400L)
-                                    service.clickByOrdinal(1)
+                                    val selected = service.clickElementByLabel(query) || service.clickByOrdinal(1)
+                                    logCallback?.invoke(if (selected) "🎬 Selected a YouTube result for: $query" else "⚠️ Could not select a YouTube result for: $query")
                                     break
                                 }
                             }
@@ -977,8 +1037,12 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                     val clickedDirectly = AgentAccessibilityService.instance?.clickElementByLabel(spoken.trim()) ?: false
                     if (clickedDirectly) {
                         "Clicked $spoken."
+                    } else if (AgentAccessibilityService.instance == null) {
+                        "Screen control is off. Enable Muse Screen Controller in Android Accessibility settings, then repeat the request."
+                    } else if (taskExecutor.getEffectiveGeminiKey().isBlank()) {
+                        "That request needs the Gemini planner. Add your Gemini API key on the Muse screen; common voice commands still work without it."
                     } else {
-                        "Please save your Gemini API key on the Muse dashboard so my AI brain can handle any custom conversation or task."
+                        "I could not safely map that request to an action. Please say the app and the exact task you want."
                     }
                 }
             }
@@ -994,7 +1058,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun buildNotification(text: String): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Muse AI v8.1 Thinking Agent")
+            .setContentTitle("Muse AI v8.2 Voice Assistant")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)

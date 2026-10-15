@@ -70,7 +70,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(4.dp(), 0, 4.dp(), 12.dp())
         }
         val brandTitle = TextView(this).apply {
-            text = "MUSE AI v6.0 • UNIVERSAL"
+            text = "MUSE AI v8.0 • UNIVERSAL"
             textSize = 18f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#F8FAFC"))
@@ -357,7 +357,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 6.dp())
         }
         logView = TextView(this).apply {
-            text = "• Muse v6.0 Universal Engine Ready."
+            text = "• Muse v8.0 Universal Engine Ready."
             textSize = 12f
             typeface = Typeface.MONOSPACE
             setTextColor(Color.parseColor("#CBD5E1"))

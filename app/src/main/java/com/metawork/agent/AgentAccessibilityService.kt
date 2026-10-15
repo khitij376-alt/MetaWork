@@ -361,9 +361,31 @@ class AgentAccessibilityService : AccessibilityService() {
     /**
      * Clicks the main visible video/article card in the middle of the screen (used for "play this video" / "open this").
      */
+    private fun isHomeLauncherPackage(pkg: String): Boolean {
+        val p = pkg.lowercase()
+        return p.contains("launcher") || p.contains("miui.home") || p.contains("oneui.home") || p.contains("trebuchet") || p.contains("lawnchair") || p.contains("oppo.launcher") || p.contains("vivo.launcher") || p.contains("realme")
+    }
+
+    fun getActivePackageName(): String {
+        return runOnMainSync {
+            getTargetAppRoot()?.packageName?.toString()?.lowercase().orEmpty()
+        } ?: ""
+    }
+
+    fun isHomeLauncherActive(): Boolean {
+        val pkg = getActivePackageName()
+        return isHomeLauncherPackage(pkg)
+    }
+
     fun clickMainContentOrCenter(): Boolean {
         return runOnMainSync {
             val root = getTargetAppRoot()
+            val pkg = root?.packageName?.toString().orEmpty()
+            // Never fire blind center/widget taps on the phone's Home Screen Launcher (prevents tapping Weather widget!)
+            if (isHomeLauncherPackage(pkg)) {
+                VoiceAgentForegroundService.logCallback?.invoke("🛡️ Guard: Ignored blind video click on Home Screen Launcher")
+                return@runOnMainSync false
+            }
             val m = resources.displayMetrics
             val w = m.widthPixels
             val h = m.heightPixels
@@ -393,6 +415,11 @@ class AgentAccessibilityService : AccessibilityService() {
     fun clickByOrdinal(indexOneBased: Int): Boolean {
         return runOnMainSync {
             val root = getTargetAppRoot() ?: return@runOnMainSync false
+            val pkg = root.packageName?.toString().orEmpty()
+            if (isHomeLauncherPackage(pkg)) {
+                VoiceAgentForegroundService.logCallback?.invoke("🛡️ Guard: Blocked ordinal click on Home Screen")
+                return@runOnMainSync false
+            }
             val candidates = mutableListOf<AccessibilityNodeInfo>()
             collectClickableContentNodes(root, candidates, 0)
             if (candidates.isEmpty()) {
@@ -639,7 +666,12 @@ class AgentAccessibilityService : AccessibilityService() {
             val editables = mutableListOf<AccessibilityNodeInfo>()
             collectAllEditableNodes(root, editables, 0)
 
-            val node = if (targetFieldQuery.isNotBlank()) {
+            val node = if (targetFieldQuery.equals("Message", ignoreCase = true)) {
+                findNodeByViewId(root, "com.whatsapp:id/entry")
+                    ?: findNodeByViewId(root, "com.whatsapp.w4b:id/entry")
+                    ?: findBestMatchingNode(root, "Message", requireEditable = true)
+                    ?: editables.lastOrNull()
+            } else if (targetFieldQuery.isNotBlank()) {
                 findBestMatchingNode(root, targetFieldQuery, requireEditable = true)
                     ?: root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
                     ?: editables.firstOrNull()
@@ -839,10 +871,12 @@ class AgentAccessibilityService : AccessibilityService() {
         val matches = if (exactOnly) {
             t == q || d == q || h == q || id == q
         } else {
-            (t.isNotEmpty() && (t.contains(q) || q.contains(t) && t.length >= 3)) ||
-                (d.isNotEmpty() && (d.contains(q) || q.contains(d) && d.length >= 3)) ||
+            q.length >= 2 && (
+                (t.isNotEmpty() && t.contains(q)) ||
+                (d.isNotEmpty() && d.contains(q)) ||
                 (h.isNotEmpty() && h.contains(q)) ||
-                (id.isNotEmpty() && id.contains(q))
+                (id.isNotEmpty() && id == q)
+            )
         }
         if (matches && node.isVisibleToUser && (!requireEditable || isEdit)) {
             return node

@@ -373,19 +373,23 @@ class TaskActionExecutor(private val context: Context) {
         for (stepIdx in 1..6) {
             try {
                 val uiTree = service.dumpScreenTreeJson()
-                val prompt = "You are Muse, an autonomous Android Screen Agent with full thinking power. " +
-                    "User goal: '" + userGoal + "'. " +
-                    "Previous actions taken: " + history.joinToString("; ") + ". " +
-                    "Current visible screen UI elements JSON (includes text, desc, hint, id, clickable, editable, password, centerX, centerY): " + uiTree + ". " +
-                    "Think carefully about what is currently on the screen and decide the next single action to complete the user goal (including logging into websites/apps, filling username/password, scrolling, or clicking videos/buttons). " +
-                    "Return ONLY a JSON object with fields: " +
-                    "thought (1 short sentence explaining what you see and why you chose this action), " +
-                    "action ('open_app'|'open_url'|'click'|'type'|'type_password'|'scroll'|'tap_xy'|'navigate'|'done'), " +
-                    "target (app name, URL, button text, field hint, or scroll direction UP/DOWN/LEFT/RIGHT), " +
-                    "value (text or password to enter if action is type or type_password), " +
+                val prompt = "You are Muse, an intelligent, warm, autonomous Android AI Agent (like a smart human assistant). " +
+                    "User request: '" + userGoal + "'. " +
+                    "Previous steps taken: " + history.joinToString("; ") + ". " +
+                    "Current visible screen UI elements JSON: " + uiTree + ". " +
+                    "Think carefully: " +
+                    "1. If the user is asking a general question or chatting, set action='done', done=true, and put your smart, natural answer in 'spoken'. " +
+                    "2. If the user wants to send a WhatsApp message (including asking you to write/draft a message), set action='send_whatsapp', target=recipient name, value=the clean message text to send, done=true. " +
+                    "3. If the user wants to play a song/video on YouTube, set action='youtube_play', target=search query, done=true. " +
+                    "4. Otherwise choose the exact screen action ('open_app'|'open_url'|'click'|'click_ordinal'|'type'|'type_password'|'scroll'|'tap_xy'|'navigate'|'done') to progress the task. " +
+                    "Return ONLY a valid JSON object with fields: " +
+                    "thought (1 short sentence of reasoning), " +
+                    "action ('open_app'|'open_url'|'send_whatsapp'|'youtube_play'|'click'|'click_ordinal'|'type'|'type_password'|'scroll'|'tap_xy'|'navigate'|'done'), " +
+                    "target (app name, URL, recipient, button label, ordinal '1'/'2'/'3', field hint, or scroll direction UP/DOWN/LEFT/RIGHT), " +
+                    "value (message or text/password to type), " +
                     "x (number if tap_xy), y (number if tap_xy), " +
-                    "done (boolean, true if goal is finished after this action), " +
-                    "spoken (short 1-sentence confirmation for the user)."
+                    "done (boolean), " +
+                    "spoken (natural, warm, concise Hinglish/English voice reply)."
 
                 val bodyJson = JSONObject().apply {
                     put("contents", JSONArray().put(JSONObject().apply {
@@ -430,6 +434,15 @@ class TaskActionExecutor(private val context: Context) {
                 when (act) {
                     "open_app" -> launchBookingOrApp("app", "", target, target)
                     "open_url" -> executeToolCall("open_website", JSONObject().put("url", target))
+                    "send_whatsapp" -> sendWhatsAppAutonomous(target, value)
+                    "youtube_play" -> {
+                        launchBookingOrApp("youtube", "", target, "youtube")
+                        if (target.isNotBlank()) {
+                            mainHandler.postDelayed({
+                                AgentAccessibilityService.instance?.clickByOrdinal(1)
+                            }, 3200L)
+                        }
+                    }
                     "click" -> {
                         if (!service.clickElementByLabel(target)) {
                             val px = plan.optDouble("x", -1.0)
@@ -437,6 +450,7 @@ class TaskActionExecutor(private val context: Context) {
                             if (px > 0 && py > 0) service.tapCoordinates(px.toFloat(), py.toFloat())
                         }
                     }
+                    "click_ordinal" -> service.clickByOrdinal(target.toIntOrNull() ?: 1)
                     "type" -> service.inputTextIntoField(target, value, submitImeAfter = true)
                     "type_password" -> service.inputPasswordField(value, submitLoginAfter = true)
                     "scroll" -> service.scrollScreen(target.ifBlank { "DOWN" })
@@ -517,28 +531,48 @@ class TaskActionExecutor(private val context: Context) {
         if (waPkg != null) {
             val launchIntent = context.packageManager.getLaunchIntentForPackage(waPkg)
             if (launchIntent != null && startActivitySafely(launchIntent)) {
-                VoiceAgentForegroundService.logCallback?.invoke("🔍 Searching '$recipient' in WhatsApp to send: '$msgText'")
-                mainHandler.postDelayed({
-                    AgentAccessibilityService.instance?.clickUniversalSearchTrigger()
-                }, 1200L)
-                mainHandler.postDelayed({
-                    AgentAccessibilityService.instance?.inputTextIntoField("", recipient, submitImeAfter = false)
-                }, 2100L)
-                mainHandler.postDelayed({
-                    AgentAccessibilityService.instance?.clickContactRowInList(recipient)
-                }, 3300L)
-                mainHandler.postDelayed({
-                    val service = AgentAccessibilityService.instance
-                    if (service != null) {
-                        val typed = service.inputTextIntoField("Message", msgText, false) || service.inputTextIntoField("", msgText, false)
-                        if (typed) {
-                            mainHandler.postDelayed({
-                                service.clickWhatsAppSendButton()
-                                VoiceAgentForegroundService.logCallback?.invoke("✅ Sent '$msgText' to $recipient")
-                            }, 750L)
+                VoiceAgentForegroundService.logCallback?.invoke("🔍 Opening WhatsApp & verifying window for '$recipient'...")
+                Thread {
+                    try {
+                        val service = AgentAccessibilityService.instance ?: return@Thread
+                        // Step 1: Poll until WhatsApp window is actually in the foreground (up to 4.5s)
+                        var waVisible = false
+                        for (i in 1..15) {
+                            Thread.sleep(300L)
+                            if (service.getActivePackageName().contains("whatsapp")) {
+                                waVisible = true
+                                break
+                            }
                         }
-                    }
-                }, 4500L)
+                        if (!waVisible) return@Thread
+                        Thread.sleep(400L)
+
+                        // Step 2: Click WhatsApp Search icon & type recipient name
+                        service.clickUniversalSearchTrigger()
+                        Thread.sleep(750L)
+                        service.inputTextIntoField("Search", recipient, submitImeAfter = false)
+
+                        // Step 3: Poll until contact row appears and click it
+                        var clickedContact = false
+                        for (i in 1..8) {
+                            Thread.sleep(350L)
+                            if (service.clickContactRowInList(recipient)) {
+                                clickedContact = true
+                                break
+                            }
+                        }
+                        if (!clickedContact) return@Thread
+                        Thread.sleep(750L)
+
+                        // Step 4: Type ONLY the clean message into WhatsApp chat input box (com.whatsapp:id/entry) & click Send!
+                        val typed = service.inputTextIntoField("Message", msgText, submitImeAfter = false)
+                        if (typed) {
+                            Thread.sleep(550L)
+                            service.clickWhatsAppSendButton()
+                            VoiceAgentForegroundService.logCallback?.invoke("✅ Sent '$msgText' to $recipient")
+                        }
+                    } catch (_: Throwable) {}
+                }.start()
                 return true
             }
         }

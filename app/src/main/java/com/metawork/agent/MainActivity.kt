@@ -16,9 +16,11 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -42,6 +44,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var accessibilityBannerBtn: Button
 
     private val logLines = mutableListOf<String>()
+    private var torchState = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,7 +61,7 @@ class MainActivity : AppCompatActivity() {
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(18.dp(), 20.dp(), 18.dp(), 32.dp())
+            setPadding(18.dp(), 20.dp(), 18.dp(), 36.dp())
         }
 
         val headerRow = LinearLayout(this).apply {
@@ -67,7 +70,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(4.dp(), 0, 4.dp(), 12.dp())
         }
         val brandTitle = TextView(this).apply {
-            text = "MUSE AI v4.0 • PRO"
+            text = "MUSE AI v5.0 • UNIVERSAL"
             textSize = 18f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#F8FAFC"))
@@ -96,14 +99,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         faceView = AgentFaceView(this, isMiniOverlay = false).apply {
-            layoutParams = LinearLayout.LayoutParams(165.dp(), 165.dp())
+            layoutParams = LinearLayout.LayoutParams(160.dp(), 160.dp())
             setOnClickListener {
                 VoiceAgentForegroundService.instance?.wakeUpMuse(null)
             }
         }
 
         val tapFaceHint = TextView(this).apply {
-            text = "TAP FLOATING MUSE FACE ON ANY APP TO COMMAND (ZERO MIC LAG)"
+            text = "TAP FLOATING MUSE FACE ON ANY APP TO CLICK, SCROLL, OR RUN ANY TASK"
             textSize = 11f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#38BDF8"))
@@ -112,7 +115,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         transcriptView = TextView(this).apply {
-            text = "⚡ Zero-Lag Mode: Mic stays OFF when idle so your phone never makes laggy mic sounds. Tap my face anytime to speak!"
+            text = "⚡ Universal Screen Engine Ready. Enable Screen Controller below, open any app, and tap the floating Muse face!"
             textSize = 14f
             setTextColor(Color.parseColor("#F1F5F9"))
             gravity = Gravity.CENTER
@@ -125,7 +128,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         wakeBtn = Button(this).apply {
-            text = "🎙️ Tap to Speak Command"
+            text = "🎙️ Speak Command"
             textSize = 12f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#052E16"))
@@ -200,11 +203,11 @@ class MainActivity : AppCompatActivity() {
         container.addView(statusRow)
 
         accessibilityBannerBtn = Button(this).apply {
-            text = "⚡ STEP 1: TAP HERE & TURN ON 'MUSE AUTONOMOUS SCREEN CONTROLLER' FOR FULL SCREEN ACCESS"
+            text = "⚡ IMPORTANT: TAP HERE & TURN ON 'MUSE AUTONOMOUS SCREEN CONTROLLER' TO ENABLE CLICK & SCROLL!"
             textSize = 12f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#052E16"))
-            background = roundedBg("#10B981", "#059669", 12.dp())
+            background = roundedBg("#F59E0B", "#D97706", 12.dp())
             setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 bottomMargin = 14.dp()
@@ -215,8 +218,60 @@ class MainActivity : AppCompatActivity() {
         }
         container.addView(accessibilityBannerBtn)
 
+        // Gemini AI Key Card (For Unlimited Multi-Step Screen Tasks)
+        val keyCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg("#111827", "#1E293B", 14.dp())
+            setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = 14.dp()
+            }
+        }
+        val keyLabel = TextView(this).apply {
+            text = "🧠 GEMINI AI KEY (OPTIONAL — FOR UNLIMITED MULTI-STEP SCREEN TASKS)"
+            textSize = 11f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Color.parseColor("#38BDF8"))
+        }
+        val keyRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = 6.dp()
+            }
+        }
+        val prefs = getSharedPreferences("muse_prefs", MODE_PRIVATE)
+        val keyInput = EditText(this).apply {
+            hint = "Paste AIzaSy... Gemini Key here"
+            setText(prefs.getString("gemini_api_key", ""))
+            setHintTextColor(Color.parseColor("#64748B"))
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            background = roundedBg("#070B14", "#334155", 8.dp())
+            setPadding(10.dp(), 8.dp(), 10.dp(), 8.dp())
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                rightMargin = 8.dp()
+            }
+        }
+        val saveKeyBtn = Button(this).apply {
+            text = "Save"
+            textSize = 12f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Color.parseColor("#052E16"))
+            background = roundedBg("#10B981", "#059669", 8.dp())
+            setOnClickListener {
+                val k = keyInput.text.toString().trim()
+                VoiceAgentForegroundService.instance?.taskExecutor?.saveGeminiKey(k)
+                Toast.makeText(this@MainActivity, "Saved Gemini AI Key!", Toast.LENGTH_SHORT).show()
+            }
+        }
+        keyRow.addView(keyInput)
+        keyRow.addView(saveKeyBtn)
+        keyCard.addView(keyLabel)
+        keyCard.addView(keyRow)
+        container.addView(keyCard)
+
         val gridHeader = TextView(this).apply {
-            text = "ADVANCED SCREEN CONTROL COMMANDS (SPEAK OR TAP TO TEST)"
+            text = "UNIVERSAL TASKS & SCREEN GESTURES (TAP TO TEST OR SPEAK)"
             textSize = 12f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#94A3B8"))
@@ -232,14 +287,16 @@ class MainActivity : AppCompatActivity() {
         }
 
         val quickTasks = listOf(
-            Triple("💬 WhatsApp Message", "Say: 'Rahul ko hello bhejo'", "Open WhatsApp"),
-            Triple("▶️ YouTube + Play", "Say: 'Open YouTube and search Arijit Singh and click first video'", "Open YouTube and search Arijit Singh"),
+            Triple("⬇️ Test Scroll Down", "Say: 'Scroll down' / 'Niche karo'", "Scroll down"),
+            Triple("⬆️ Test Scroll Up", "Say: 'Scroll up' / 'Upar karo'", "Scroll up"),
             Triple("🔄 Auto-Scroll Reels", "Say: 'Auto scroll down' (Tap face to stop)", "Auto scroll down"),
-            Triple("📖 Read My Screen", "Say: 'Read screen' / 'Kya likha hai'", "Read screen"),
-            Triple("📸 Take Screenshot", "Say: 'Take screenshot'", "Take screenshot"),
-            Triple("🚆 Book IRCTC Train", "Say: 'Book a train on IRCTC'", "Book a train ticket on IRCTC"),
-            Triple("🚕 Book Uber Cab", "Say: 'Book an Uber to Station'", "Book an Uber to Railway Station"),
-            Triple("🔍 Google Search", "Say: 'Google search weather'", "Google search weather today")
+            Triple("🔦 Toggle Flashlight", "Say: 'Torch on' / 'Torch off'", "Torch on"),
+            Triple("⏰ Set 7:00 AM Alarm", "Say: 'Set alarm for 7 AM'", "Set alarm for 7 AM"),
+            Triple("🗺️ Maps Navigation", "Say: 'Navigate to Patna Junction'", "Navigate to Patna Junction"),
+            Triple("💬 WhatsApp Message", "Say: 'Rahul ko hello bhejo'", "Open WhatsApp"),
+            Triple("▶️ YouTube Auto-Play", "Say: 'Play Arijit Singh on YouTube'", "Play Arijit Singh on YouTube"),
+            Triple("📶 Wi-Fi Settings", "Say: 'Open Wi-Fi settings'", "Open Wi-Fi settings"),
+            Triple("📸 Take Screenshot", "Say: 'Take screenshot'", "Take screenshot")
         )
 
         for (i in quickTasks.indices step 2) {
@@ -258,7 +315,12 @@ class MainActivity : AppCompatActivity() {
                             setMargins(4.dp(), 4.dp(), 4.dp(), 4.dp())
                         }
                         setOnClickListener {
-                            VoiceAgentForegroundService.instance?.handleSpokenCommand(item.third)
+                            if (item.first.contains("Flashlight")) {
+                                torchState = !torchState
+                                VoiceAgentForegroundService.instance?.handleSpokenCommand(if (torchState) "Torch on" else "Torch off")
+                            } else {
+                                VoiceAgentForegroundService.instance?.handleSpokenCommand(item.third)
+                            }
                         }
                     }
                     val tView = TextView(this).apply {
@@ -295,7 +357,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 6.dp())
         }
         logView = TextView(this).apply {
-            text = "• Muse v4.0 Ready (Zero Mic Lag). Enable Screen Controller above, then tap floating Muse face on any app!"
+            text = "• Muse v5.0 Universal Engine Ready."
             textSize = 12f
             typeface = Typeface.MONOSPACE
             setTextColor(Color.parseColor("#CBD5E1"))
@@ -356,7 +418,7 @@ class MainActivity : AppCompatActivity() {
         )
 
         val hasAcc = AgentAccessibilityService.instance != null
-        accStatusPill.text = if (hasAcc) "📱 Screen Control: ON" else "📱 Screen Control: OFF"
+        accStatusPill.text = if (hasAcc) "📱 Screen Control: ON" else "📱 Screen Control: OFF - TAP"
         accStatusPill.setTextColor(if (hasAcc) Color.parseColor("#10B981") else Color.parseColor("#F59E0B"))
         accessibilityBannerBtn.visibility = if (hasAcc) View.GONE else View.VISIBLE
     }

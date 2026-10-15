@@ -3,11 +3,14 @@ package com.metawork.agent
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.provider.AlarmClock
 import android.provider.ContactsContract
+import android.provider.MediaStore
 import android.provider.Settings
 import android.telephony.SmsManager
 import okhttp3.MediaType.Companion.toMediaType
@@ -27,6 +30,19 @@ class TaskActionExecutor(private val context: Context) {
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
+
+    fun getEffectiveGeminiKey(): String {
+        val prefs = context.getSharedPreferences("muse_prefs", Context.MODE_PRIVATE)
+        val saved = prefs.getString("gemini_api_key", "")?.trim().orEmpty()
+        return if (saved.isNotEmpty()) saved else BuildConfig.GEMINI_API_KEY.trim()
+    }
+
+    fun saveGeminiKey(key: String) {
+        context.getSharedPreferences("muse_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("gemini_api_key", key.trim())
+            .apply()
+    }
 
     private fun startActivitySafely(intent: Intent): Boolean {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -133,6 +149,32 @@ class TaskActionExecutor(private val context: Context) {
                     adjustDeviceVolume(dir)
                     result.put("status", "ok")
                 }
+                "set_torch" -> {
+                    val enable = args.optBoolean("enable", true)
+                    val ok = setTorchLight(enable)
+                    result.put("status", if (ok) "ok" else "failed")
+                }
+                "set_alarm" -> {
+                    val hour = args.optInt("hour", 7)
+                    val minute = args.optInt("minute", 0)
+                    val ok = setSystemAlarm(hour, minute)
+                    result.put("status", if (ok) "ok" else "failed")
+                }
+                "set_timer" -> {
+                    val seconds = args.optInt("seconds", 60)
+                    val ok = setSystemTimer(seconds)
+                    result.put("status", if (ok) "ok" else "failed")
+                }
+                "open_setting" -> {
+                    val setting = args.optString("setting", "main")
+                    val ok = openSystemSetting(setting)
+                    result.put("status", if (ok) "ok" else "failed")
+                }
+                "maps_navigate" -> {
+                    val dest = args.optString("destination", "")
+                    val ok = launchMapsNavigation(dest)
+                    result.put("status", if (ok) "ok" else "failed")
+                }
                 "open_app_or_booking" -> {
                     val ok = launchBookingOrApp(
                         args.optString("category", "app"),
@@ -190,21 +232,70 @@ class TaskActionExecutor(private val context: Context) {
         return result
     }
 
+    private fun setTorchLight(enable: Boolean): Boolean {
+        return try {
+            val cm = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val cameraId = cm.cameraIdList.firstOrNull() ?: return false
+            cm.setTorchMode(cameraId, enable)
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun setSystemAlarm(hour: Int, minute: Int): Boolean {
+        val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
+            putExtra(AlarmClock.EXTRA_HOUR, hour.coerceIn(0, 23))
+            putExtra(AlarmClock.EXTRA_MINUTES, minute.coerceIn(0, 59))
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+        }
+        return startActivitySafely(intent)
+    }
+
+    private fun setSystemTimer(seconds: Int): Boolean {
+        val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
+            putExtra(AlarmClock.EXTRA_LENGTH, seconds.coerceAtLeast(5))
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+        }
+        return startActivitySafely(intent)
+    }
+
+    private fun openSystemSetting(setting: String): Boolean {
+        val action = when (setting.lowercase()) {
+            "wifi", "wi-fi" -> Settings.ACTION_WIFI_SETTINGS
+            "bluetooth" -> Settings.ACTION_BLUETOOTH_SETTINGS
+            "display", "brightness" -> Settings.ACTION_DISPLAY_SETTINGS
+            "sound", "volume" -> Settings.ACTION_SOUND_SETTINGS
+            "battery" -> Intent.ACTION_POWER_USAGE_SUMMARY
+            "location", "gps" -> Settings.ACTION_LOCATION_SOURCE_SETTINGS
+            "airplane" -> Settings.ACTION_AIRPLANE_MODE_SETTINGS
+            "accessibility" -> Settings.ACTION_ACCESSIBILITY_SETTINGS
+            else -> Settings.ACTION_SETTINGS
+        }
+        return startActivitySafely(Intent(action))
+    }
+
+    private fun launchMapsNavigation(destination: String): Boolean {
+        val encoded = URLEncoder.encode(destination.ifBlank { "Railway Station" }, "UTF-8")
+        val navIntent = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$encoded")).apply {
+            setPackage("com.google.android.apps.maps")
+        }
+        if (startActivitySafely(navIntent)) return true
+        return startActivitySafely(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/search/?api=1&query=$encoded")))
+    }
+
     private fun searchInsideActiveApp(query: String): Boolean {
         val service = AgentAccessibilityService.instance ?: return false
         if (query.isBlank()) return false
 
-        // Step 1: Try typing directly if an editable search field is already focused/visible
         val typedDirectly = service.inputTextIntoField("Search", query, submitImeAfter = true)
         if (typedDirectly) {
             mainHandler.postDelayed({
                 service.pressImeEnterOnFocused()
-                service.clickElementByLabel(query)
-            }, 900L)
+            }, 700L)
             return true
         }
 
-        // Step 2: Tap the app's search icon/bar, then type and submit
         val clickedSearchIcon = service.clickUniversalSearchTrigger()
         if (clickedSearchIcon) {
             mainHandler.postDelayed({
@@ -213,8 +304,8 @@ class TaskActionExecutor(private val context: Context) {
                     if (!service.pressImeEnterOnFocused()) {
                         service.clickElementByLabel("Search")
                     }
-                }, 700L)
-            }, 850L)
+                }, 650L)
+            }, 800L)
             return true
         }
         return false
@@ -239,68 +330,87 @@ class TaskActionExecutor(private val context: Context) {
     }
 
     /**
-     * Uses Gemini 2.0 Flash to inspect the live Accessibility UI tree and execute custom screen goals.
+     * Multi-Step Autonomous Gemini ReAct Loop:
+     * Executes up to 4 sequential screen inspection & action steps to complete any user task.
      */
-    fun runGeminiAutonomousScreenPlan(userGoal: String, apiKey: String): String? {
+    fun runGeminiAutonomousScreenPlan(userGoal: String, passedKey: String = ""): String? {
+        val apiKey = passedKey.ifBlank { getEffectiveGeminiKey() }
         if (apiKey.isBlank()) return null
         val service = AgentAccessibilityService.instance ?: return null
-        return try {
-            val uiTree = service.dumpScreenTreeJson()
-            val prompt = "You are Muse, an Android Accessibility Screen Controller. " +
-                "User command: '" + userGoal + "'. " +
-                "Current visible screen UI elements JSON: " + uiTree + ". " +
-                "Return ONLY a valid JSON object with fields: " +
-                "action ('click'|'type'|'scroll'|'tap_xy'|'navigate'|'none'), " +
-                "target (label or text or direction), " +
-                "value (text to type if action is type), " +
-                "x (number if tap_xy), y (number if tap_xy), " +
-                "spoken (short 1-sentence confirmation)."
 
-            val bodyJson = JSONObject().apply {
-                put("contents", JSONArray().put(JSONObject().apply {
-                    put("parts", JSONArray().put(JSONObject().put("text", prompt)))
-                }))
-                put("generationConfig", JSONObject().put("responseMimeType", "application/json"))
-            }
+        var lastSpoken = "Completed task."
+        val history = mutableListOf<String>()
 
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$apiKey"
-            val req = Request.Builder()
-                .url(url)
-                .post(bodyJson.toString().toRequestBody("application/json".toMediaType()))
-                .build()
+        for (stepIdx in 1..4) {
+            try {
+                val uiTree = service.dumpScreenTreeJson()
+                val prompt = "You are Muse, an autonomous Android Screen Agent. " +
+                    "User goal: '" + userGoal + "'. " +
+                    "Previous actions taken: " + history.joinToString("; ") + ". " +
+                    "Current screen UI elements JSON: " + uiTree + ". " +
+                    "Decide the next single action to complete the user goal. " +
+                    "Return ONLY a JSON object with fields: " +
+                    "action ('open_app'|'click'|'type'|'scroll'|'tap_xy'|'navigate'|'done'), " +
+                    "target (app name, button text, field hint, or scroll direction UP/DOWN/LEFT/RIGHT), " +
+                    "value (text to type if action is type), " +
+                    "x (number if tap_xy), y (number if tap_xy), " +
+                    "done (boolean, true if goal is finished after this action), " +
+                    "spoken (short 1-sentence confirmation for the user)."
 
-            httpClient.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return null
-                val raw = resp.body?.string().orEmpty()
-                val root = JSONObject(raw)
-                val textPart = root.optJSONArray("candidates")
-                    ?.optJSONObject(0)
-                    ?.optJSONObject("content")
-                    ?.optJSONArray("parts")
-                    ?.optJSONObject(0)
-                    ?.optString("text")
-                    .orEmpty()
-                if (textPart.isBlank()) return null
+                val bodyJson = JSONObject().apply {
+                    put("contents", JSONArray().put(JSONObject().apply {
+                        put("parts", JSONArray().put(JSONObject().put("text", prompt)))
+                    }))
+                    put("generationConfig", JSONObject().put("responseMimeType", "application/json"))
+                }
 
-                val plan = JSONObject(textPart)
-                val act = plan.optString("action", "none")
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$apiKey"
+                val req = Request.Builder()
+                    .url(url)
+                    .post(bodyJson.toString().toRequestBody("application/json".toMediaType()))
+                    .build()
+
+                val plan = httpClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return if (stepIdx > 1) lastSpoken else null
+                    val raw = resp.body?.string().orEmpty()
+                    val root = JSONObject(raw)
+                    val textPart = root.optJSONArray("candidates")
+                        ?.optJSONObject(0)
+                        ?.optJSONObject("content")
+                        ?.optJSONArray("parts")
+                        ?.optJSONObject(0)
+                        ?.optString("text")
+                        .orEmpty()
+                    if (textPart.isBlank()) null else JSONObject(textPart)
+                } ?: return if (stepIdx > 1) lastSpoken else null
+
+                val act = plan.optString("action", "done")
                 val target = plan.optString("target", "")
                 val value = plan.optString("value", "")
-                val spoken = plan.optString("spoken", "Done.")
+                val isDone = plan.optBoolean("done", false)
+                lastSpoken = plan.optString("spoken", lastSpoken)
+
+                VoiceAgentForegroundService.logCallback?.invoke("🤖 AI Step $stepIdx: $act ($target)")
+                history.add("$act:$target")
 
                 when (act) {
+                    "open_app" -> launchBookingOrApp("app", "", target, target)
                     "click" -> service.clickElementByLabel(target)
                     "type" -> service.inputTextIntoField(target, value, submitImeAfter = true)
                     "scroll" -> service.scrollScreen(target.ifBlank { "DOWN" })
-                    "tap_xy" -> service.tapCoordinates(plan.optDouble("x", 500.0).toFloat(), plan.optDouble("y", 500.0).toFloat())
+                    "tap_xy" -> service.tapCoordinates(plan.optDouble("x", 540.0).toFloat(), plan.optDouble("y", 960.0).toFloat())
                     "navigate" -> service.navigateGlobal(target.ifBlank { "BACK" })
-                    else -> return null
+                    "done" -> return lastSpoken
+                    else -> return if (stepIdx > 1) lastSpoken else null
                 }
-                spoken
+
+                if (isDone) return lastSpoken
+                Thread.sleep(1900L)
+            } catch (_: Throwable) {
+                return if (stepIdx > 1) lastSpoken else null
             }
-        } catch (_: Throwable) {
-            null
         }
+        return lastSpoken
     }
 
     private fun getWhatsAppPackage(): String? {
@@ -442,15 +552,20 @@ class TaskActionExecutor(private val context: Context) {
                 if (query == "settings" || query == "setting") {
                     return startActivitySafely(Intent(Settings.ACTION_SETTINGS))
                 }
+                if (query == "camera" || query == "photo") {
+                    return startActivitySafely(Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA))
+                }
 
                 val knownPackages = mapOf(
                     "whatsapp" to "com.whatsapp",
                     "youtube" to "com.google.android.youtube",
                     "instagram" to "com.instagram.android",
+                    "facebook" to "com.facebook.katana",
                     "chrome" to "com.android.chrome",
                     "gmail" to "com.google.android.gm",
                     "maps" to "com.google.android.apps.maps",
                     "telegram" to "org.telegram.messenger",
+                    "snapchat" to "com.snapchat.android",
                     "spotify" to "com.spotify.music",
                     "paytm" to "net.one97.paytm",
                     "phonepe" to "com.phonepe.app",
@@ -458,9 +573,19 @@ class TaskActionExecutor(private val context: Context) {
                     "google pay" to "com.google.android.apps.nbu.paisa.user",
                     "flipkart" to "com.flipkart.android",
                     "amazon" to "in.amazon.mShop.android.shopping",
+                    "meesho" to "com.meesho.supply",
+                    "myntra" to "com.myntra.android",
                     "zomato" to "com.application.zomato",
                     "swiggy" to "in.swiggy.android",
-                    "camera" to "com.android.camera",
+                    "blinkit" to "com.grofers.customerapp",
+                    "zepto" to "com.zeptoconsumerapp",
+                    "ola" to "com.olacabs.customer",
+                    "rapido" to "com.rapido.passenger",
+                    "calculator" to "com.google.android.calculator",
+                    "calendar" to "com.google.android.calendar",
+                    "clock" to "com.google.android.deskclock",
+                    "contacts" to "com.google.android.contacts",
+                    "files" to "com.google.android.apps.nbu.files",
                     "play store" to "com.android.vending"
                 )
                 for ((alias, pkg) in knownPackages) {

@@ -68,7 +68,6 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
     private var isSpeaking = false
     private var isListeningActive = false
 
-    // Default: Zero-Lag On-Demand Mode (handsFreeWakeMode = false) so mic NEVER causes laggy sound in background!
     @Volatile
     var handsFreeWakeMode: Boolean = false
         private set
@@ -97,10 +96,10 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
         super.onCreate()
         instance = this
         try {
-            val chan = NotificationChannel(CHANNEL_ID, "Muse AI Autonomous Controller", NotificationManager.IMPORTANCE_LOW)
+            val chan = NotificationChannel(CHANNEL_ID, "Muse AI Universal Controller", NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java).createNotificationChannel(chan)
 
-            val notification = buildNotification("⚡ Muse Ready (Zero Mic Lag) — Tap Floating Face to Speak")
+            val notification = buildNotification("⚡ Muse v5.0 Ready — Tap Floating Face on Any App")
             val hasMicPerm = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && hasMicPerm) {
@@ -125,7 +124,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
 
             gemini = GeminiVoiceSessionManager(
                 applicationContext,
-                BuildConfig.GEMINI_API_KEY,
+                taskExecutor.getEffectiveGeminiKey(),
                 taskExecutor
             ) { state ->
                 updateStatus(state)
@@ -141,7 +140,6 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             tts?.language = Locale.forLanguageTag("en-IN")
-            // Use USAGE_MEDIA so Android never switches speaker into low-quality voice call mode
             tts?.setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -151,12 +149,12 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {
                     isSpeaking = true
-                    ignoreSpeechUntilMs = System.currentTimeMillis() + 3500L
+                    ignoreSpeechUntilMs = System.currentTimeMillis() + 3000L
                     setFaceState("SPEAKING", 0.85f)
                 }
                 override fun onDone(utteranceId: String?) {
                     isSpeaking = false
-                    ignoreSpeechUntilMs = System.currentTimeMillis() + 900L
+                    ignoreSpeechUntilMs = System.currentTimeMillis() + 800L
                     mainHandler.postDelayed({
                         if (isAwakeForCommand) {
                             setFaceState("LISTENING", 0.4f)
@@ -171,13 +169,13 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                             setFaceState("STANDBY", 0.1f)
                             updateStatus("⚡ READY (Zero Mic Lag) — Tap Face to Speak")
                         }
-                    }, 900L)
+                    }, 800L)
                 }
                 @Deprecated("Deprecated in Java")
                 override fun onError(utteranceId: String?) {
                     isSpeaking = false
                     if (isAwakeForCommand || handsFreeWakeMode) {
-                        mainHandler.postDelayed({ startListeningCycle() }, 900L)
+                        mainHandler.postDelayed({ startListeningCycle() }, 800L)
                     } else {
                         releaseMicCompletely()
                     }
@@ -197,18 +195,14 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    /**
-     * Wakes Muse up immediately when user taps the floating Muse face or Wake button.
-     * Starts listening right away without lag!
-     */
     fun wakeUpMuse(greeting: String? = null) {
         AgentAccessibilityService.instance?.stopAutoScroll()
         isAwakeForCommand = true
         awakeUntilMs = System.currentTimeMillis() + AWAKE_WINDOW_MS
         setFaceState("LISTENING", 0.45f)
         updateStatus("🟢 MUSE LISTENING — Speak Command Now")
-        transcriptCallback?.invoke("🎙️ Listening... Speak your command now (Hindi / English)")
-        logCallback?.invoke("🎙️ Mic opened for command")
+        transcriptCallback?.invoke("🎙️ Listening... Speak any command (Click, Scroll, Search, Open, WhatsApp, Torch, Alarm)")
+        logCallback?.invoke("🎙️ Mic opened — Speak command")
 
         if (!greeting.isNullOrBlank()) {
             speakOut(greeting, keepAwakeAfter = true)
@@ -224,28 +218,19 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
         if (handsFreeWakeMode) {
             setFaceState("WAKE_WORD", 0.15f)
             updateStatus("🎙️ Hands-Free ('Muse') Active")
-            transcriptCallback?.invoke("🎙️ Hands-Free Mode: Say 'Muse' + command.")
+            transcriptCallback?.invoke("🎙️ Hands-Free Mode: Say 'Muse' + any command.")
             startListeningCycle()
         } else {
             releaseMicCompletely()
             setFaceState("STANDBY", 0.1f)
             updateStatus("⚡ READY (Zero Mic Lag) — Tap Face to Speak")
-            transcriptCallback?.invoke("⚡ Zero-Lag Mode: Mic is OFF (no lag sound). Tap my face on any screen to speak!")
+            transcriptCallback?.invoke("⚡ Smooth Zero-Lag Mode: Tap floating Muse face on any app to Click, Scroll, or Run Tasks!")
         }
     }
 
-    /**
-     * Toggles between Zero-Lag Tap-to-Speak Mode (default, mic off when idle) and Hands-Free 'Muse' Wake-Word Mode.
-     */
     fun toggleHandsFreeWakeMode(): Boolean {
         handsFreeWakeMode = !handsFreeWakeMode
-        if (handsFreeWakeMode) {
-            logCallback?.invoke("🎙️ Hands-Free 'Muse' Wake-Word enabled")
-            enterStandbyMode()
-        } else {
-            logCallback?.invoke("⚡ Zero-Lag Tap-to-Speak Mode enabled (Mic OFF when idle)")
-            enterStandbyMode()
-        }
+        enterStandbyMode()
         return handsFreeWakeMode
     }
 
@@ -259,7 +244,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
         } else if (!handsFreeWakeMode) {
             releaseMicCompletely()
         }
-        ignoreSpeechUntilMs = System.currentTimeMillis() + 3000L
+        ignoreSpeechUntilMs = System.currentTimeMillis() + 2800L
 
         setFaceState("SPEAKING", 0.85f)
         transcriptCallback?.invoke("🤖 Muse: $message")
@@ -275,7 +260,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                 } else {
                     enterStandbyMode()
                 }
-            }, 1600L)
+            }, 1400L)
         }
     }
 
@@ -324,7 +309,6 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                             val delayMs = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 2500L else 1800L
                             mainHandler.postDelayed({ startListeningCycle() }, delayMs)
                         } else {
-                            // In Zero-Lag mode, do NOT loop-restart the mic on silence timeout!
                             enterStandbyMode()
                         }
                     }
@@ -362,7 +346,6 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
-        // Check if user prefixed with "Muse"
         val wakeResult = extractWakeWordCommand(rawSpoken)
         if (wakeResult != null) {
             val inlineCommand = wakeResult.trim()
@@ -430,8 +413,8 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 6000L)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 5000L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 5000L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L)
                 }
                 speechRecognizer?.startListening(intent)
                 isListeningActive = true
@@ -513,10 +496,6 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
         return Pair("", "")
     }
 
-    /**
-     * Splits multi-step voice commands like "Open YouTube and search Arijit Singh and click first item"
-     * (except when it is a single WhatsApp message command).
-     */
     private fun splitChainedCommands(spoken: String): List<String> {
         val lower = spoken.lowercase(Locale.ROOT)
         if (lower.contains("whatsapp") && (lower.contains("saying") || lower.contains(" ko ") || lower.contains("message"))) {
@@ -555,6 +534,10 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun extractNumbers(text: String): List<Int> {
+        return Regex("[0-9]+").findAll(text).mapNotNull { it.value.toIntOrNull() }.toList()
+    }
+
     private fun executeSingleStep(spoken: String): String {
         val lower = spoken.lowercase(Locale.ROOT).trim()
         return when {
@@ -562,23 +545,85 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                 AgentAccessibilityService.instance?.stopAutoScroll()
                 "Stopped."
             }
+            // Flashlight / Torch
+            lower.contains("torch") || lower.contains("flashlight") -> {
+                val turnOff = lower.contains("off") || lower.contains("band")
+                val res = taskExecutor.executeToolCall("set_torch", JSONObject().put("enable", !turnOff))
+                if (res.optString("status") == "ok") {
+                    if (turnOff) "Turned off flashlight." else "Turned on flashlight."
+                } else {
+                    "Could not toggle flashlight."
+                }
+            }
+            // Alarms
+            lower.contains("alarm") -> {
+                val nums = extractNumbers(lower)
+                var hour = nums.getOrElse(0) { 7 }
+                val minute = nums.getOrElse(1) { 0 }
+                if ((lower.contains("pm") || lower.contains("shaam") || lower.contains("raat")) && hour in 1..11) {
+                    hour += 12
+                }
+                taskExecutor.executeToolCall("set_alarm", JSONObject().put("hour", hour).put("minute", minute))
+                "Set alarm for $hour:${minute.toString().padStart(2, '0')}."
+            }
+            // Timers
+            lower.contains("timer") -> {
+                val nums = extractNumbers(lower)
+                val amount = nums.firstOrNull() ?: 5
+                val seconds = if (lower.contains("second")) amount else amount * 60
+                taskExecutor.executeToolCall("set_timer", JSONObject().put("seconds", seconds))
+                "Started timer for $amount ${if (lower.contains("second")) "seconds" else "minutes"}."
+            }
+            // Google Maps Navigation
+            lower.contains("navigate to ") || lower.contains("direction to ") || lower.contains("rasta") || lower.startsWith("map ") -> {
+                val dest = spoken
+                    .replace(Regex("^(?:navigate[ ]+to|direction[ ]+to|directions[ ]+to|map[ ]+to|maps[ ]+to)[ ]*", RegexOption.IGNORE_CASE), "")
+                    .replace("ka rasta dikhao", "")
+                    .replace("ka rasta", "")
+                    .trim()
+                taskExecutor.executeToolCall("maps_navigate", JSONObject().put("destination", dest))
+                "Starting Google Maps navigation to $dest."
+            }
+            // System Settings
+            lower.contains("wifi") || lower.contains("wi-fi") -> {
+                taskExecutor.executeToolCall("open_setting", JSONObject().put("setting", "wifi"))
+                "Opened Wi-Fi settings."
+            }
+            lower.contains("bluetooth") -> {
+                taskExecutor.executeToolCall("open_setting", JSONObject().put("setting", "bluetooth"))
+                "Opened Bluetooth settings."
+            }
+            lower.contains("brightness") || lower.contains("display setting") -> {
+                taskExecutor.executeToolCall("open_setting", JSONObject().put("setting", "display"))
+                "Opened display and brightness settings."
+            }
+            lower.contains("battery") -> {
+                taskExecutor.executeToolCall("open_setting", JSONObject().put("setting", "battery"))
+                "Opened battery status."
+            }
+            lower.contains("location setting") || lower.contains("gps") -> {
+                taskExecutor.executeToolCall("open_setting", JSONObject().put("setting", "location"))
+                "Opened location settings."
+            }
+            // Auto-Scroll
             lower.contains("auto scroll") || lower.contains("keep scrolling") || lower.contains("reels scroll") -> {
                 val dir = if (lower.contains("up")) "UP" else "DOWN"
-                taskExecutor.executeToolCall("auto_scroll", JSONObject().put("enable", true).put("direction", dir))
-                "Started auto scrolling. Tap my floating face anytime to stop."
+                val res = taskExecutor.executeToolCall("auto_scroll", JSONObject().put("enable", true).put("direction", dir))
+                if (res.optString("status") == "ok") "Auto scrolling started. Tap my floating face to stop." else "Please enable Muse Screen Controller in Accessibility Settings first."
             }
+            // Read Screen
             lower.contains("read screen") || lower.contains("screen padho") || lower.contains("what is on screen") || lower.contains("kya likha hai") -> {
                 val res = taskExecutor.executeToolCall("read_screen", JSONObject())
-                val summary = res.optString("summary", "")
-                summary.ifBlank { "Please enable Muse Screen Controller in Accessibility Settings first." }
+                res.optString("summary", "").ifBlank { "Please enable Muse Screen Controller in Accessibility Settings." }
             }
+            // System Global Actions
             lower.contains("screenshot") -> {
                 taskExecutor.executeToolCall("navigate_system", JSONObject().put("action", "SCREENSHOT"))
                 "Took a screenshot."
             }
             lower.contains("lock screen") || lower.contains("phone lock") -> {
                 taskExecutor.executeToolCall("navigate_system", JSONObject().put("action", "LOCK_SCREEN"))
-                "Locked the screen."
+                "Locked screen."
             }
             lower.contains("notification") -> {
                 taskExecutor.executeToolCall("navigate_system", JSONObject().put("action", "NOTIFICATIONS"))
@@ -600,34 +645,54 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                 taskExecutor.executeToolCall("adjust_volume", JSONObject().put("direction", "DOWN"))
                 "Decreased volume."
             }
+            // Screen Gestures & Ordinal Clicks
             lower.contains("double tap") || lower == "like" || lower == "like karo" -> {
-                taskExecutor.executeToolCall("double_tap", JSONObject())
-                "Double tapped screen."
+                val res = taskExecutor.executeToolCall("double_tap", JSONObject())
+                if (res.optString("status") == "ok") "Double tapped screen." else "Enable Muse Screen Controller first."
             }
             lower.startsWith("long press") || lower.startsWith("hold ") || lower.contains("long press") -> {
                 val target = spoken.replace(Regex("^(?:long[ ]+press|hold)(?:[ ]+on)?[ ]*", RegexOption.IGNORE_CASE), "").trim()
                 taskExecutor.executeToolCall("long_press", JSONObject().put("label", target))
                 "Long pressed $target."
             }
-            lower.contains("first ") || lower.contains("1st") || lower.contains("pehla") || lower.contains("top result") || lower.contains("first video") -> {
-                taskExecutor.executeToolCall("click_ordinal", JSONObject().put("index", 1))
-                "Clicked the first item on screen."
+            lower.contains("first ") || lower.contains("1st") || lower.contains("pehla") || lower.contains("top result") || lower.contains("first video") || lower == "first" -> {
+                val res = taskExecutor.executeToolCall("click_ordinal", JSONObject().put("index", 1))
+                if (res.optString("status") == "ok") "Clicked first item." else "Could not click first item. Make sure Screen Controller is ON."
             }
-            lower.contains("second ") || lower.contains("2nd") || lower.contains("dusra") -> {
-                taskExecutor.executeToolCall("click_ordinal", JSONObject().put("index", 2))
-                "Clicked the second item on screen."
+            lower.contains("second ") || lower.contains("2nd") || lower.contains("dusra") || lower == "second" -> {
+                val res = taskExecutor.executeToolCall("click_ordinal", JSONObject().put("index", 2))
+                if (res.optString("status") == "ok") "Clicked second item." else "Could not click second item."
             }
-            lower.contains("third ") || lower.contains("3rd") || lower.contains("teesra") -> {
-                taskExecutor.executeToolCall("click_ordinal", JSONObject().put("index", 3))
-                "Clicked the third item on screen."
+            lower.contains("third ") || lower.contains("3rd") || lower.contains("teesra") || lower == "third" -> {
+                val res = taskExecutor.executeToolCall("click_ordinal", JSONObject().put("index", 3))
+                if (res.optString("status") == "ok") "Clicked third item." else "Could not click third item."
             }
+            // Scroll Up / Down / Left / Right (Includes "scroll", "niche", "upar", "next", "swipe")
+            lower == "scroll" || lower.contains("scroll down") || lower.contains("niche") || lower.contains("next reel") || lower.contains("next video") || lower.contains("next short") || lower == "next" || lower.contains("swipe up") -> {
+                val res = taskExecutor.executeToolCall("scroll_screen", JSONObject().put("direction", "DOWN"))
+                if (res.optString("status") == "ok") "Scrolled down." else "Please turn ON Muse Screen Controller in Accessibility Settings."
+            }
+            lower.contains("scroll up") || lower.contains("upar") || lower.contains("previous reel") || lower.contains("previous video") || lower.contains("swipe down") -> {
+                val res = taskExecutor.executeToolCall("scroll_screen", JSONObject().put("direction", "UP"))
+                if (res.optString("status") == "ok") "Scrolled up." else "Please turn ON Muse Screen Controller in Accessibility Settings."
+            }
+            lower.contains("swipe left") || lower.contains("left swipe") || lower.contains("scroll left") -> {
+                taskExecutor.executeToolCall("scroll_screen", JSONObject().put("direction", "LEFT"))
+                "Swiped left."
+            }
+            lower.contains("swipe right") || lower.contains("right swipe") || lower.contains("scroll right") -> {
+                taskExecutor.executeToolCall("scroll_screen", JSONObject().put("direction", "RIGHT"))
+                "Swiped right."
+            }
+            // Text Entry
             lower.startsWith("write ") || lower.startsWith("type ") || lower.contains("likho ") -> {
                 val txt = spoken
                     .replace(Regex("^(write|type|likho)[ ]+", RegexOption.IGNORE_CASE), "")
                     .trim()
                 val res = taskExecutor.executeToolCall("enter_text", JSONObject().put("text", txt).put("click_send_after", true))
-                if (res.optString("status") == "ok") "Typed $txt." else "Please tap an input field or enable Muse Screen Controller."
+                if (res.optString("status") == "ok") "Typed $txt." else "Tap an input box first or enable Screen Controller."
             }
+            // WhatsApp
             lower.contains("whatsapp") || lower.contains("bhejo") || (lower.contains("message") && !lower.contains("sms")) -> {
                 val (recipient, msg) = parseWhatsAppIntent(spoken)
                 if (recipient.isBlank()) {
@@ -638,6 +703,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                     "Sending WhatsApp message to $recipient."
                 }
             }
+            // SMS & Calls & Bookings
             lower.contains("sms ") || lower.contains("text message") -> {
                 val recipient = spoken.substringAfter("to ", "").substringBefore(" saying").substringBefore(" ko ").trim()
                 val msg = spoken.substringAfter("saying ", "Hello").trim()
@@ -646,7 +712,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             lower.contains("train") || lower.contains("irctc") || lower.contains("rail") -> {
                 taskExecutor.executeToolCall("open_app_or_booking", JSONObject().put("category", "train"))
-                "Opening IRCTC train ticket booking."
+                "Opening IRCTC train booking."
             }
             lower.contains("flight") || lower.contains("makemytrip") || lower.contains("plane") -> {
                 val dest = lower.substringAfter("to ", "Mumbai").substringBefore(" ").trim()
@@ -660,11 +726,11 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             lower.contains("bus") || lower.contains("redbus") -> {
                 taskExecutor.executeToolCall("open_app_or_booking", JSONObject().put("category", "bus"))
-                "Opening RedBus ticket booking."
+                "Opening RedBus."
             }
             lower.contains("movie") || lower.contains("bookmyshow") || lower.contains("cinema") -> {
                 taskExecutor.executeToolCall("open_app_or_booking", JSONObject().put("category", "movie"))
-                "Opening BookMyShow movie tickets."
+                "Opening BookMyShow."
             }
             lower.contains("call ") || lower.contains("dial ") || lower.contains("phone lagao") -> {
                 val target = lower.substringAfter("call ", "").substringAfter("dial ", "").replace("ko", "").trim()
@@ -679,7 +745,14 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                     .replace("youtube", "")
                     .trim()
                 taskExecutor.executeToolCall("open_app_or_booking", JSONObject().put("category", "youtube").put("destination", query))
-                if (query.isNotEmpty()) "Playing $query on YouTube." else "Opening YouTube."
+                if (query.isNotEmpty()) {
+                    mainHandler.postDelayed({
+                        AgentAccessibilityService.instance?.clickByOrdinal(1)
+                    }, 3200L)
+                    "Playing $query on YouTube."
+                } else {
+                    "Opening YouTube."
+                }
             }
             lower.contains("google search") || lower.contains("search on google") || lower.contains("search google") -> {
                 val query = lower
@@ -692,7 +765,6 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                 taskExecutor.executeToolCall("open_app_or_booking", JSONObject().put("category", "search").put("destination", query))
                 "Searching Google for $query."
             }
-            // Universal In-App Search ("search iPhone 16", "Arijit Singh search karo") inside whatever app is currently open!
             lower.startsWith("search ") || lower.endsWith(" search karo") || lower.contains("search for ") -> {
                 val query = spoken
                     .replace(Regex("^(?:search[ ]+for|search)[ ]+", RegexOption.IGNORE_CASE), "")
@@ -710,31 +782,21 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                     .replace("please", "")
                     .trim()
                 val res = taskExecutor.executeToolCall("open_app_or_booking", JSONObject().put("category", "app").put("app_name", appName))
-                if (res.optString("status") == "ok") "Opened $appName." else "Could not find installed app $appName."
+                if (res.optString("status") == "ok") {
+                    "Opened $appName."
+                } else {
+                    // Maybe the user said "Open Settings" or "Open Shorts" which is a button on screen!
+                    val clicked = AgentAccessibilityService.instance?.clickElementByLabel(appName) ?: false
+                    if (clicked) "Opened $appName on screen." else "Could not find app or button $appName."
+                }
             }
-            lower.contains("scroll down") || lower.contains("niche") || lower.contains("next reel") || lower.contains("next video") || lower.contains("next short") || lower == "next" -> {
-                taskExecutor.executeToolCall("scroll_screen", JSONObject().put("direction", "DOWN"))
-                "Scrolled down."
-            }
-            lower.contains("scroll up") || lower.contains("upar") || lower.contains("previous reel") || lower.contains("previous video") -> {
-                taskExecutor.executeToolCall("scroll_screen", JSONObject().put("direction", "UP"))
-                "Scrolled up."
-            }
-            lower.contains("swipe left") || lower.contains("left swipe") -> {
-                taskExecutor.executeToolCall("scroll_screen", JSONObject().put("direction", "LEFT"))
-                "Swiped left."
-            }
-            lower.contains("swipe right") || lower.contains("right swipe") -> {
-                taskExecutor.executeToolCall("scroll_screen", JSONObject().put("direction", "RIGHT"))
-                "Swiped right."
-            }
-            lower.contains("click ") || lower.contains("tap ") || lower.contains("dabao") || lower.contains("select ") -> {
+            lower.contains("click ") || lower.contains("tap ") || lower.contains("dabao") || lower.contains("select ") || lower.contains("press ") -> {
                 val label = spoken
-                    .replace(Regex("^(?:click|tap|select)(?:[ ]+on)?[ ]+", RegexOption.IGNORE_CASE), "")
-                    .replace("dabao", "")
+                    .replace(Regex("^(?:click|tap|select|press)(?:[ ]+on)?[ ]+", RegexOption.IGNORE_CASE), "")
+                    .replace(Regex("[ ]+(?:par[ ]+click[ ]+karo|click[ ]+karo|dabao)$", RegexOption.IGNORE_CASE), "")
                     .trim()
                 val res = taskExecutor.executeToolCall("click_element", JSONObject().put("label", label))
-                if (res.optString("status") == "ok") "Clicked $label." else "Could not find $label on screen."
+                if (res.optString("status") == "ok") "Clicked $label." else "Could not find '$label' on screen."
             }
             lower.contains("back") || lower.contains("piche") -> {
                 taskExecutor.executeToolCall("navigate_system", JSONObject().put("action", "BACK"))
@@ -745,14 +807,14 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                 "Went to home screen."
             }
             else -> {
-                // 1. Try clicking any visible element matching the spoken text directly
+                // 1. Try clicking any visible element matching the spoken text directly on screen
                 val clickedDirectly = AgentAccessibilityService.instance?.clickElementByLabel(spoken.trim()) ?: false
                 if (clickedDirectly) {
                     "Clicked $spoken."
                 } else {
-                    // 2. If Gemini API key is configured, run AI UI Tree Planner on current screen
-                    val aiSpoken = taskExecutor.runGeminiAutonomousScreenPlan(spoken, BuildConfig.GEMINI_API_KEY)
-                    aiSpoken ?: "I could not find '$spoken' on this screen. Try saying Click, Scroll, Search, Type, or Open App."
+                    // 2. Run Multi-Step Gemini Autonomous Screen Agent Loop!
+                    val aiSpoken = taskExecutor.runGeminiAutonomousScreenPlan(spoken)
+                    aiSpoken ?: "Done checking screen for '$spoken'."
                 }
             }
         }
@@ -767,7 +829,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun buildNotification(text: String): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Muse AI Screen Controller")
+            .setContentTitle("Muse AI v5.0 Universal Agent")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)

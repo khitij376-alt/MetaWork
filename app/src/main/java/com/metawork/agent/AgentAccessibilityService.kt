@@ -54,7 +54,7 @@ class AgentAccessibilityService : AccessibilityService() {
         mainHandler.post { showFloatingAgentFaceOverlay() }
     }
 
-    private fun <T> runOnMainSync(timeoutMs: Long = 2200L, block: () -> T): T? {
+    private fun <T> runOnMainSync(timeoutMs: Long = 2500L, block: () -> T): T? {
         if (Looper.myLooper() == Looper.getMainLooper()) {
             return try { block() } catch (_: Throwable) { null }
         }
@@ -166,9 +166,6 @@ class AgentAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    /**
-     * Always retrieves the active underlying application window (ignoring our floating overlay window).
-     */
     private fun getTargetAppRoot(): AccessibilityNodeInfo? {
         try {
             val winList = windows
@@ -194,6 +191,44 @@ class AgentAccessibilityService : AccessibilityService() {
             }
         } catch (_: Throwable) {}
         return rootInActiveWindow
+    }
+
+    /**
+     * Analyzes the current screen ("Thinking" step) to report active app, editable fields, and key buttons.
+     */
+    fun analyzeScreenContextSummary(): String {
+        return runOnMainSync {
+            val root = getTargetAppRoot() ?: return@runOnMainSync "No active screen window."
+            val pkg = root.packageName?.toString()?.substringAfterLast(".") ?: "app"
+            val buttons = mutableListOf<String>()
+            val inputs = mutableListOf<String>()
+            var hasPassword = false
+            scanScreenFeatures(root, buttons, inputs, 0) { hasPassword = true }
+            val btnPreview = buttons.distinct().take(6).joinToString(", ")
+            "App=$pkg | Inputs=${inputs.size} (Password=$hasPassword) | Buttons=[$btnPreview]"
+        } ?: "Screen unavailable"
+    }
+
+    private fun scanScreenFeatures(
+        node: AccessibilityNodeInfo?,
+        buttons: MutableList<String>,
+        inputs: MutableList<String>,
+        depth: Int,
+        onPasswordFound: () -> Unit
+    ) {
+        if (node == null || depth > 24) return
+        if (node.isVisibleToUser) {
+            val label = (node.text?.toString() ?: node.contentDescription?.toString() ?: "").trim()
+            if (node.isPassword) onPasswordFound()
+            if (node.isEditable) {
+                inputs.add(label.ifBlank { "input" })
+            } else if ((node.isClickable || label.isNotEmpty()) && label.length in 2..35) {
+                buttons.add(label)
+            }
+        }
+        for (i in 0 until node.childCount) {
+            scanScreenFeatures(node.getChild(i), buttons, inputs, depth + 1, onPasswordFound)
+        }
     }
 
     fun dumpScreenTreeJson(): String {
@@ -229,11 +264,12 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     private fun traverseNode(node: AccessibilityNodeInfo?, out: JSONArray, depth: Int) {
-        if (node == null || depth > 25 || out.length() >= 85) return
+        if (node == null || depth > 26 || out.length() >= 90) return
         val text = node.text?.toString()?.trim().orEmpty()
         val desc = node.contentDescription?.toString()?.trim().orEmpty()
+        val hint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) node.hintText?.toString()?.trim().orEmpty() else ""
         val viewId = node.viewIdResourceName?.substringAfterLast("/") ?: ""
-        val isInteractive = node.isClickable || node.isEditable || node.isScrollable || text.isNotEmpty() || desc.isNotEmpty()
+        val isInteractive = node.isClickable || node.isEditable || node.isScrollable || node.isPassword || text.isNotEmpty() || desc.isNotEmpty() || hint.isNotEmpty()
 
         if (isInteractive && node.isVisibleToUser) {
             val bounds = Rect()
@@ -242,9 +278,11 @@ class AgentAccessibilityService : AccessibilityService() {
                 out.put(JSONObject().apply {
                     put("text", text)
                     put("desc", desc)
+                    put("hint", hint)
                     put("id", viewId)
                     put("clickable", node.isClickable)
                     put("editable", node.isEditable)
+                    put("password", node.isPassword)
                     put("scrollable", node.isScrollable)
                     put("centerX", bounds.centerX())
                     put("centerY", bounds.centerY())
@@ -256,14 +294,99 @@ class AgentAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Smart Click Engine with Semantic Synonym Expansion + Spatial Regions:
+     * Understands "login"/"sign in", "play this video", "top right", "center", "bottom", or any button label.
+     */
     fun clickElementByLabel(query: String): Boolean {
-        val clean = query.trim()
+        val clean = query.trim().lowercase()
         if (clean.isBlank()) return false
+
+        // Check spatial click requests first ("center", "top right", "bottom right", "top left", "bottom left")
+        val m = resources.displayMetrics
+        val w = m.widthPixels.toFloat()
+        val h = m.heightPixels.toFloat()
+        when {
+            clean == "center" || clean == "middle" || clean == "beech me" || clean == "this video" || clean == "video" -> {
+                return clickMainContentOrCenter()
+            }
+            clean.contains("top right") || clean.contains("upar right") -> return tapCoordinates(w * 0.90f, h * 0.09f)
+            clean.contains("top left") || clean.contains("upar left") -> return tapCoordinates(w * 0.10f, h * 0.09f)
+            clean.contains("bottom right") || clean.contains("niche right") -> return tapCoordinates(w * 0.88f, h * 0.92f)
+            clean.contains("bottom left") || clean.contains("niche left") -> return tapCoordinates(w * 0.12f, h * 0.92f)
+        }
+
+        // Expand semantic synonyms (e.g. if user says "login", also search "sign in", "log in", "submit", "continue")
+        val candidateQueries = buildSemanticCandidates(clean)
+
         return runOnMainSync {
             val root = getTargetAppRoot() ?: return@runOnMainSync false
-            // 1. Try exact match first, then substring match
-            val target = findBestMatchingNode(root, clean, requireEditable = false) ?: return@runOnMainSync false
-            clickNodeGuaranteed(target)
+            for (cand in candidateQueries) {
+                val exact = findNodeRecursive(root, cand, requireEditable = false, exactOnly = true)
+                if (exact != null && clickNodeGuaranteed(exact)) {
+                    VoiceAgentForegroundService.logCallback?.invoke("🎯 Clicked exact match: '$cand'")
+                    return@runOnMainSync true
+                }
+            }
+            for (cand in candidateQueries) {
+                val partial = findNodeRecursive(root, cand, requireEditable = false, exactOnly = false)
+                if (partial != null && clickNodeGuaranteed(partial)) {
+                    VoiceAgentForegroundService.logCallback?.invoke("🎯 Clicked match: '$cand'")
+                    return@runOnMainSync true
+                }
+            }
+            false
+        } ?: false
+    }
+
+    private fun buildSemanticCandidates(q: String): List<String> {
+        val list = mutableListOf(q)
+        when {
+            q == "login" || q == "log in" || q == "sign in" || q == "signin" -> {
+                list.addAll(listOf("log in", "login", "sign in", "continue", "submit", "next", "proceed"))
+            }
+            q == "submit" || q == "continue" || q == "next" -> {
+                list.addAll(listOf("submit", "continue", "next", "proceed", "done", "confirm", "ok"))
+            }
+            q == "search" || q == "khojo" -> {
+                list.addAll(listOf("search", "find", "go"))
+            }
+            q == "send" || q == "bhejo" -> {
+                list.addAll(listOf("send", "भेजें", "post", "submit"))
+            }
+        }
+        return list.distinct()
+    }
+
+    /**
+     * Clicks the main visible video/article card in the middle of the screen (used for "play this video" / "open this").
+     */
+    fun clickMainContentOrCenter(): Boolean {
+        return runOnMainSync {
+            val root = getTargetAppRoot()
+            val m = resources.displayMetrics
+            val w = m.widthPixels
+            val h = m.heightPixels
+            if (root != null) {
+                val candidates = mutableListOf<AccessibilityNodeInfo>()
+                collectClickableContentNodes(root, candidates, 0)
+                // Pick the content item closest to the vertical center of the screen (between 22% and 75% height)
+                val centerCandidate = candidates.minByOrNull { node ->
+                    val r = Rect()
+                    node.getBoundsInScreen(r)
+                    abs(r.centerY() - (h * 0.45f).toInt())
+                }
+                if (centerCandidate != null) {
+                    val r = Rect()
+                    centerCandidate.getBoundsInScreen(r)
+                    if (r.centerY() in (h / 6)..(h * 5 / 6)) {
+                        VoiceAgentForegroundService.logCallback?.invoke("🎬 Tapping visible video/item at (${r.centerX()}, ${r.centerY()})")
+                        return@runOnMainSync clickNodeGuaranteed(centerCandidate)
+                    }
+                }
+            }
+            // Fallback: tap center of screen directly
+            dispatchTapAt(w * 0.5f, h * 0.42f)
         } ?: false
     }
 
@@ -272,25 +395,135 @@ class AgentAccessibilityService : AccessibilityService() {
             val root = getTargetAppRoot() ?: return@runOnMainSync false
             val candidates = mutableListOf<AccessibilityNodeInfo>()
             collectClickableContentNodes(root, candidates, 0)
-            if (candidates.isEmpty()) return@runOnMainSync false
+            if (candidates.isEmpty()) {
+                val m = resources.displayMetrics
+                return@runOnMainSync dispatchTapAt(m.widthPixels * 0.5f, m.heightPixels * 0.38f)
+            }
             val idx = (indexOneBased - 1).coerceIn(0, candidates.size - 1)
             clickNodeGuaranteed(candidates[idx])
         } ?: false
     }
 
     private fun collectClickableContentNodes(node: AccessibilityNodeInfo?, out: MutableList<AccessibilityNodeInfo>, depth: Int) {
-        if (node == null || depth > 22 || out.size >= 30) return
+        if (node == null || depth > 24 || out.size >= 35) return
         val bounds = Rect()
         node.getBoundsInScreen(bounds)
         val hasLabel = !node.text.isNullOrBlank() || !node.contentDescription.isNullOrBlank()
-        if (node.isVisibleToUser && bounds.centerY() > 210 && bounds.height() > 28 && (node.isClickable || hasLabel)) {
-            if (hasLabel) {
+        val id = node.viewIdResourceName?.lowercase().orEmpty()
+        val isVideoOrCard = id.contains("video") || id.contains("thumbnail") || id.contains("player") || id.contains("card") || id.contains("item") || id.contains("row")
+        if (node.isVisibleToUser && bounds.centerY() > 200 && bounds.height() > 32 && (node.isClickable || hasLabel || isVideoOrCard)) {
+            if (hasLabel || isVideoOrCard) {
                 out.add(node)
             }
         }
         for (i in 0 until node.childCount) {
             collectClickableContentNodes(node.getChild(i), out, depth + 1)
         }
+    }
+
+    /**
+     * Enters text into a Password field on any app or website (detects node.isPassword or hint/text "password"/"pin").
+     */
+    fun inputPasswordField(passwordValue: String, submitLoginAfter: Boolean = false): Boolean {
+        return runOnMainSync {
+            val root = getTargetAppRoot() ?: return@runOnMainSync false
+            val editables = mutableListOf<AccessibilityNodeInfo>()
+            collectAllEditableNodes(root, editables, 0)
+
+            val passNode = editables.firstOrNull { it.isPassword }
+                ?: findBestMatchingNode(root, "password", requireEditable = true)
+                ?: findBestMatchingNode(root, "pin", requireEditable = true)
+                ?: findBestMatchingNode(root, "passcode", requireEditable = true)
+                ?: if (editables.size >= 2) editables[1] else editables.firstOrNull()
+
+            if (passNode == null) return@runOnMainSync false
+
+            val ok = setNodeTextGuaranteed(passNode, passwordValue, submitImeAfter = submitLoginAfter)
+            if (ok && submitLoginAfter) {
+                mainHandler.postDelayed({
+                    clickElementByLabel("login")
+                }, 650L)
+            }
+            ok
+        } ?: false
+    }
+
+    /**
+     * Enters text into a Username / Email / Phone field on any app or website.
+     */
+    fun inputUsernameOrEmailField(usernameValue: String): Boolean {
+        val normalized = normalizeSpokenEmailOrUsername(usernameValue)
+        return runOnMainSync {
+            val root = getTargetAppRoot() ?: return@runOnMainSync false
+            val editables = mutableListOf<AccessibilityNodeInfo>()
+            collectAllEditableNodes(root, editables, 0)
+
+            val userNode = findBestMatchingNode(root, "email", requireEditable = true)
+                ?: findBestMatchingNode(root, "user", requireEditable = true)
+                ?: findBestMatchingNode(root, "phone", requireEditable = true)
+                ?: findBestMatchingNode(root, "mobile", requireEditable = true)
+                ?: findBestMatchingNode(root, "login", requireEditable = true)
+                ?: editables.firstOrNull { !it.isPassword }
+                ?: editables.firstOrNull()
+
+            if (userNode == null) return@runOnMainSync false
+            setNodeTextGuaranteed(userNode, normalized, submitImeAfter = false)
+        } ?: false
+    }
+
+    /**
+     * Complete Website / App Login Automation: fills both Username/Email and Password, then clicks Login/Sign In!
+     */
+    fun fillLoginFormOnScreen(username: String, password: String): Boolean {
+        val userOk = if (username.isNotBlank()) inputUsernameOrEmailField(username) else true
+        mainHandler.postDelayed({
+            if (password.isNotBlank()) {
+                inputPasswordField(password, submitLoginAfter = true)
+            } else {
+                clickElementByLabel("login")
+            }
+        }, 700L)
+        return userOk
+    }
+
+    private fun normalizeSpokenEmailOrUsername(raw: String): String {
+        var s = raw.trim()
+        if (s.lowercase().contains("at the rate") || s.lowercase().contains("gmail") || s.lowercase().contains(" dot ")) {
+            s = s.replace(Regex("[ ]*at the rate[ ]*", RegexOption.IGNORE_CASE), "@")
+                .replace(Regex("[ ]*at[ ]+gmail", RegexOption.IGNORE_CASE), "@gmail")
+                .replace(Regex("[ ]*dot[ ]*", RegexOption.IGNORE_CASE), ".")
+                .replace(" ", "")
+        }
+        return s
+    }
+
+    private fun collectAllEditableNodes(node: AccessibilityNodeInfo?, out: MutableList<AccessibilityNodeInfo>, depth: Int) {
+        if (node == null || depth > 25) return
+        val cls = node.className?.toString()?.lowercase().orEmpty()
+        if (node.isVisibleToUser && (node.isEditable || node.isPassword || cls.contains("edittext"))) {
+            out.add(node)
+        }
+        for (i in 0 until node.childCount) {
+            collectAllEditableNodes(node.getChild(i), out, depth + 1)
+        }
+    }
+
+    private fun setNodeTextGuaranteed(node: AccessibilityNodeInfo, value: String, submitImeAfter: Boolean): Boolean {
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        if (rect.width() > 0 && rect.height() > 0) {
+            dispatchTapAt(rect.centerX().toFloat(), rect.centerY().toFloat())
+        }
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
+        }
+        val ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        if (ok && submitImeAfter && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+        }
+        return ok
     }
 
     fun longPressElementByLabel(query: String): Boolean {
@@ -375,12 +608,6 @@ class AgentAccessibilityService : AccessibilityService() {
         } ?: false
     }
 
-    /**
-     * Guaranteed Click Engine:
-     * 1. Tries ACTION_CLICK on the node itself
-     * 2. Walks up parent hierarchy and tries ACTION_CLICK on clickable parent
-     * 3. Always falls back to hardware coordinate tap (dispatchGesture) at the node's screen center!
-     */
     private fun clickNodeGuaranteed(target: AccessibilityNodeInfo): Boolean {
         val rect = Rect()
         target.getBoundsInScreen(rect)
@@ -409,26 +636,18 @@ class AgentAccessibilityService : AccessibilityService() {
     fun inputTextIntoField(targetFieldQuery: String, value: String, submitImeAfter: Boolean = false): Boolean {
         return runOnMainSync {
             val root = getTargetAppRoot() ?: return@runOnMainSync false
+            val editables = mutableListOf<AccessibilityNodeInfo>()
+            collectAllEditableNodes(root, editables, 0)
+
             val node = if (targetFieldQuery.isNotBlank()) {
                 findBestMatchingNode(root, targetFieldQuery, requireEditable = true)
                     ?: root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                    ?: findFirstEditableNode(root)
+                    ?: editables.firstOrNull()
             } else {
-                root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: findFirstEditableNode(root)
+                root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: editables.firstOrNull()
             } ?: return@runOnMainSync false
 
-            node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-            node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            val args = Bundle().apply {
-                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
-            }
-            val ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-            if (ok && submitImeAfter) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
-                }
-            }
-            ok
+            setNodeTextGuaranteed(node, value, submitImeAfter)
         } ?: false
     }
 
@@ -460,7 +679,6 @@ class AgentAccessibilityService : AccessibilityService() {
 
     private fun dispatchGestureOnMain(gesture: GestureDescription): Boolean {
         return try {
-            // Temporarily make overlay untouchable during gesture so it never intercepts touches
             val face = floatingFaceView
             val params = overlayParams
             if (face != null && params != null) {
@@ -494,11 +712,6 @@ class AgentAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * Guaranteed Dual Scroll Engine:
-     * 1. Dispatches a smooth hardware swipe gesture on the Main Thread
-     * 2. Also triggers ACTION_SCROLL_FORWARD / ACTION_SCROLL_BACKWARD on scrollable container if needed
-     */
     fun scrollScreen(direction: String): Boolean {
         return runOnMainSync {
             val dir = direction.uppercase()
@@ -529,7 +742,6 @@ class AgentAccessibilityService : AccessibilityService() {
             val stroke = GestureDescription.StrokeDescription(path, 0L, 300L)
             val gestureOk = dispatchGestureOnMain(GestureDescription.Builder().addStroke(stroke).build())
 
-            // Also trigger accessibility scroll action as fallback
             if (!gestureOk) {
                 val root = getTargetAppRoot()
                 val scrollable = findFirstScrollableNode(root)
@@ -606,9 +818,7 @@ class AgentAccessibilityService : AccessibilityService() {
     private fun findBestMatchingNode(node: AccessibilityNodeInfo?, query: String, requireEditable: Boolean = false): AccessibilityNodeInfo? {
         val q = query.lowercase().trim()
         if (q.isEmpty()) return null
-        // Pass 1: Exact text or contentDescription match
         findNodeRecursive(node, q, requireEditable, exactOnly = true)?.let { return it }
-        // Pass 2: Substring match
         return findNodeRecursive(node, q, requireEditable, exactOnly = false)
     }
 
@@ -621,16 +831,20 @@ class AgentAccessibilityService : AccessibilityService() {
         if (node == null) return null
         val t = node.text?.toString()?.trim()?.lowercase().orEmpty()
         val d = node.contentDescription?.toString()?.trim()?.lowercase().orEmpty()
+        val h = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) node.hintText?.toString()?.trim()?.lowercase().orEmpty() else ""
         val id = node.viewIdResourceName?.substringAfterLast("/")?.lowercase().orEmpty()
+        val cls = node.className?.toString()?.lowercase().orEmpty()
+        val isEdit = node.isEditable || node.isPassword || cls.contains("edittext")
 
         val matches = if (exactOnly) {
-            t == q || d == q || id == q
+            t == q || d == q || h == q || id == q
         } else {
             (t.isNotEmpty() && (t.contains(q) || q.contains(t) && t.length >= 3)) ||
                 (d.isNotEmpty() && (d.contains(q) || q.contains(d) && d.length >= 3)) ||
+                (h.isNotEmpty() && h.contains(q)) ||
                 (id.isNotEmpty() && id.contains(q))
         }
-        if (matches && node.isVisibleToUser && (!requireEditable || node.isEditable)) {
+        if (matches && node.isVisibleToUser && (!requireEditable || isEdit)) {
             return node
         }
         for (i in 0 until node.childCount) {
@@ -641,7 +855,8 @@ class AgentAccessibilityService : AccessibilityService() {
 
     private fun findFirstEditableNode(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (node == null) return null
-        if (node.isEditable && node.isVisibleToUser) return node
+        val cls = node.className?.toString()?.lowercase().orEmpty()
+        if ((node.isEditable || cls.contains("edittext")) && node.isVisibleToUser) return node
         for (i in 0 until node.childCount) {
             findFirstEditableNode(node.getChild(i))?.let { return it }
         }

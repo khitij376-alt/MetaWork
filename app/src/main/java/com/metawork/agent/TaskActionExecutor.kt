@@ -85,6 +85,10 @@ class TaskActionExecutor(private val context: Context) {
                     }
                     result.put("status", if (ok) "ok" else "failed")
                 }
+                "click_center_video" -> {
+                    val ok = AgentAccessibilityService.instance?.clickMainContentOrCenter() ?: false
+                    result.put("status", if (ok) "ok" else "failed")
+                }
                 "click_ordinal" -> {
                     val index = args.optInt("index", 1)
                     val ok = AgentAccessibilityService.instance?.clickByOrdinal(index) ?: false
@@ -117,6 +121,31 @@ class TaskActionExecutor(private val context: Context) {
                         }, 550L)
                     }
                     result.put("status", if (typed) "ok" else "failed")
+                }
+                "enter_password" -> {
+                    val pass = args.optString("password", "")
+                    val submit = args.optBoolean("submit", true)
+                    val ok = AgentAccessibilityService.instance?.inputPasswordField(pass, submit) ?: false
+                    result.put("status", if (ok) "ok" else "failed")
+                }
+                "enter_username" -> {
+                    val user = args.optString("username", "")
+                    val ok = AgentAccessibilityService.instance?.inputUsernameOrEmailField(user) ?: false
+                    result.put("status", if (ok) "ok" else "failed")
+                }
+                "fill_login_form" -> {
+                    val user = args.optString("username", "")
+                    val pass = args.optString("password", "")
+                    val ok = AgentAccessibilityService.instance?.fillLoginFormOnScreen(user, pass) ?: false
+                    result.put("status", if (ok) "ok" else "failed")
+                }
+                "open_website" -> {
+                    var url = args.optString("url", "").trim()
+                    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                        url = "https://$url"
+                    }
+                    val ok = startActivitySafely(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    result.put("status", if (ok) "ok" else "failed")
                 }
                 "in_app_search" -> {
                     val query = args.optString("query", "").trim()
@@ -330,8 +359,8 @@ class TaskActionExecutor(private val context: Context) {
     }
 
     /**
-     * Multi-Step Autonomous Gemini ReAct Loop:
-     * Executes up to 4 sequential screen inspection & action steps to complete any user task.
+     * Multi-Step Autonomous Gemini ReAct Thinking Loop (up to 6 steps):
+     * Inspects screen UI tree (including password/editable fields), thinks about the goal, and executes actions.
      */
     fun runGeminiAutonomousScreenPlan(userGoal: String, passedKey: String = ""): String? {
         val apiKey = passedKey.ifBlank { getEffectiveGeminiKey() }
@@ -341,18 +370,19 @@ class TaskActionExecutor(private val context: Context) {
         var lastSpoken = "Completed task."
         val history = mutableListOf<String>()
 
-        for (stepIdx in 1..4) {
+        for (stepIdx in 1..6) {
             try {
                 val uiTree = service.dumpScreenTreeJson()
-                val prompt = "You are Muse, an autonomous Android Screen Agent. " +
+                val prompt = "You are Muse, an autonomous Android Screen Agent with full thinking power. " +
                     "User goal: '" + userGoal + "'. " +
                     "Previous actions taken: " + history.joinToString("; ") + ". " +
-                    "Current screen UI elements JSON: " + uiTree + ". " +
-                    "Decide the next single action to complete the user goal. " +
+                    "Current visible screen UI elements JSON (includes text, desc, hint, id, clickable, editable, password, centerX, centerY): " + uiTree + ". " +
+                    "Think carefully about what is currently on the screen and decide the next single action to complete the user goal (including logging into websites/apps, filling username/password, scrolling, or clicking videos/buttons). " +
                     "Return ONLY a JSON object with fields: " +
-                    "action ('open_app'|'click'|'type'|'scroll'|'tap_xy'|'navigate'|'done'), " +
-                    "target (app name, button text, field hint, or scroll direction UP/DOWN/LEFT/RIGHT), " +
-                    "value (text to type if action is type), " +
+                    "thought (1 short sentence explaining what you see and why you chose this action), " +
+                    "action ('open_app'|'open_url'|'click'|'type'|'type_password'|'scroll'|'tap_xy'|'navigate'|'done'), " +
+                    "target (app name, URL, button text, field hint, or scroll direction UP/DOWN/LEFT/RIGHT), " +
+                    "value (text or password to enter if action is type or type_password), " +
                     "x (number if tap_xy), y (number if tap_xy), " +
                     "done (boolean, true if goal is finished after this action), " +
                     "spoken (short 1-sentence confirmation for the user)."
@@ -384,19 +414,31 @@ class TaskActionExecutor(private val context: Context) {
                     if (textPart.isBlank()) null else JSONObject(textPart)
                 } ?: return if (stepIdx > 1) lastSpoken else null
 
+                val thought = plan.optString("thought", "")
                 val act = plan.optString("action", "done")
                 val target = plan.optString("target", "")
                 val value = plan.optString("value", "")
                 val isDone = plan.optBoolean("done", false)
                 lastSpoken = plan.optString("spoken", lastSpoken)
 
-                VoiceAgentForegroundService.logCallback?.invoke("🤖 AI Step $stepIdx: $act ($target)")
+                if (thought.isNotBlank()) {
+                    VoiceAgentForegroundService.logCallback?.invoke("🧠 Thought $stepIdx: $thought")
+                }
+                VoiceAgentForegroundService.logCallback?.invoke("⚡ AI Action $stepIdx: $act ($target)")
                 history.add("$act:$target")
 
                 when (act) {
                     "open_app" -> launchBookingOrApp("app", "", target, target)
-                    "click" -> service.clickElementByLabel(target)
+                    "open_url" -> executeToolCall("open_website", JSONObject().put("url", target))
+                    "click" -> {
+                        if (!service.clickElementByLabel(target)) {
+                            val px = plan.optDouble("x", -1.0)
+                            val py = plan.optDouble("y", -1.0)
+                            if (px > 0 && py > 0) service.tapCoordinates(px.toFloat(), py.toFloat())
+                        }
+                    }
                     "type" -> service.inputTextIntoField(target, value, submitImeAfter = true)
+                    "type_password" -> service.inputPasswordField(value, submitLoginAfter = true)
                     "scroll" -> service.scrollScreen(target.ifBlank { "DOWN" })
                     "tap_xy" -> service.tapCoordinates(plan.optDouble("x", 540.0).toFloat(), plan.optDouble("y", 960.0).toFloat())
                     "navigate" -> service.navigateGlobal(target.ifBlank { "BACK" })
@@ -463,7 +505,7 @@ class TaskActionExecutor(private val context: Context) {
                             val clicked = AgentAccessibilityService.instance?.clickWhatsAppSendButton() ?: false
                             if (clicked) {
                                 alreadyClickedSend.set(true)
-                                VoiceAgentForegroundService.logCallback?.invoke("✅ WhatsApp message sent to $recipient")
+                                VoiceAgentForegroundService.logCallback?.invoke("✅ Sent '$msgText' to $recipient")
                             }
                         }
                     }, delayMs)
@@ -475,7 +517,7 @@ class TaskActionExecutor(private val context: Context) {
         if (waPkg != null) {
             val launchIntent = context.packageManager.getLaunchIntentForPackage(waPkg)
             if (launchIntent != null && startActivitySafely(launchIntent)) {
-                VoiceAgentForegroundService.logCallback?.invoke("🔍 Searching '$recipient' inside WhatsApp UI...")
+                VoiceAgentForegroundService.logCallback?.invoke("🔍 Searching '$recipient' in WhatsApp to send: '$msgText'")
                 mainHandler.postDelayed({
                     AgentAccessibilityService.instance?.clickUniversalSearchTrigger()
                 }, 1200L)
@@ -492,7 +534,7 @@ class TaskActionExecutor(private val context: Context) {
                         if (typed) {
                             mainHandler.postDelayed({
                                 service.clickWhatsAppSendButton()
-                                VoiceAgentForegroundService.logCallback?.invoke("✅ WhatsApp message sent to $recipient")
+                                VoiceAgentForegroundService.logCallback?.invoke("✅ Sent '$msgText' to $recipient")
                             }, 750L)
                         }
                     }

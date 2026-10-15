@@ -216,35 +216,39 @@ class TaskActionExecutor(private val context: Context) {
                 "send_whatsapp_message" -> {
                     val recipient = args.optString("recipient", "").trim()
                     val message = args.optString("message", "").trim()
-                    val ok = sendWhatsAppAutonomous(recipient, message)
+                    val ok = recipient.isNotBlank() && message.isNotBlank() && sendWhatsAppAutonomous(recipient, message)
                     result.put("status", if (ok) "ok" else "failed")
                 }
                 "send_sms" -> {
                     val recipient = args.optString("recipient", "")
                     val message = args.optString("message", "")
                     val phone = resolvePhoneNumber(recipient) ?: recipient
-                    if (phone.any { it.isDigit() }) {
+                    if (phone.filter { it.isDigit() }.length >= 7 && message.isNotBlank()) {
                         try {
                             context.getSystemService(SmsManager::class.java)
                                 .sendTextMessage(phone, null, message, null, null)
+                            result.put("status", "ok")
                         } catch (_: Throwable) {
                             val smsIntent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$phone")).apply {
                                 putExtra("sms_body", message)
                             }
-                            startActivitySafely(smsIntent)
+                            result.put("status", if (startActivitySafely(smsIntent)) "drafted" else "failed")
                         }
+                    } else {
+                        result.put("status", "failed")
                     }
-                    result.put("status", "ok")
                 }
                 "make_phone_call" -> {
                     val recipient = args.optString("recipient", "")
                     val phone = resolvePhoneNumber(recipient) ?: recipient.filter { it.isDigit() || it == '+' }
                     if (phone.isNotBlank()) {
                         val callIntent = Intent(Intent.ACTION_CALL, Uri.parse("tel:$phone"))
-                        if (!startActivitySafely(callIntent)) {
-                            startActivitySafely(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
+                        val status = when {
+                            startActivitySafely(callIntent) -> "ok"
+                            startActivitySafely(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone"))) -> "dialer"
+                            else -> "failed"
                         }
-                        result.put("status", "ok")
+                        result.put("status", status)
                     } else {
                         result.put("status", "contact_not_found")
                     }
@@ -370,23 +374,27 @@ class TaskActionExecutor(private val context: Context) {
         var lastSpoken = "Completed task."
         val history = mutableListOf<String>()
 
-        for (stepIdx in 1..6) {
+        for (stepIdx in 1..10) {
             try {
                 val uiTree = service.dumpScreenTreeJson()
                 val prompt = "You are Muse, an intelligent, warm, autonomous Android AI Agent (like a smart human assistant). " +
                     "User request: '" + userGoal + "'. " +
                     "Previous steps taken: " + history.joinToString("; ") + ". " +
                     "Current visible screen UI elements JSON: " + uiTree + ". " +
-                    "Think carefully: " +
-                    "1. If the user is asking a general question or chatting, set action='done', done=true, and put your smart, natural answer in 'spoken'. " +
-                    "2. If the user wants to send a WhatsApp message (including asking you to write/draft a message), set action='send_whatsapp', target=recipient name, value=the clean message text to send, done=true. " +
-                    "3. If the user wants to play a song/video on YouTube, set action='youtube_play', target=search query, done=true. " +
-                    "4. Otherwise choose the exact screen action ('open_app'|'open_url'|'click'|'click_ordinal'|'type'|'type_password'|'scroll'|'tap_xy'|'navigate'|'done') to progress the task. " +
-                    "Return ONLY a valid JSON object with fields: " +
+                    "Plan one safe, observable step at a time. Understand English and Hindi/Hinglish. " +
+                    "If the request names an app (for example Instagram account signup), open/use that app; NEVER send an account-creation request to Google Search. " +
+                    "Use Google Search only when the user explicitly asks to search Google. Use open_url only for a site the user explicitly named. " +
+                    "Never invent a person's details, password, OTP, or message text; never bypass CAPTCHA, OTP, age checks, or consent screens. " +
+                    "Do not type passwords/OTPs or claim a signup/message/call succeeded unless the UI/tool confirms it; ask the user to complete private verification when needed. " +
+                    "Only send messages or place calls when the user's request contains a clear recipient and an explicit action. " +
+                    "For a general question, set action='done' and put the answer in 'spoken'. " +
+                    "For a WhatsApp send request with recipient and exact message, use send_whatsapp; for an explicit call request use call_contact; for YouTube use youtube_play. " +
+                    "Otherwise select a screen/system action that advances the stated goal; if blocked or uncertain, set action='done' and clearly explain what the user must do. " +
+                    "Return ONLY valid JSON with fields: " +
                     "thought (1 short sentence of reasoning), " +
-                    "action ('open_app'|'open_url'|'send_whatsapp'|'youtube_play'|'click'|'click_ordinal'|'type'|'type_password'|'scroll'|'tap_xy'|'navigate'|'done'), " +
+                    "action ('open_app'|'open_url'|'send_whatsapp'|'send_sms'|'call_contact'|'youtube_play'|'open_setting'|'read_screen'|'click'|'click_ordinal'|'double_tap'|'long_press'|'type'|'scroll'|'auto_scroll'|'tap_xy'|'navigate'|'done'), " +
                     "target (app name, URL, recipient, button label, ordinal '1'/'2'/'3', field hint, or scroll direction UP/DOWN/LEFT/RIGHT), " +
-                    "value (message or text/password to type), " +
+                    "value (exact message or non-sensitive text to type), " +
                     "x (number if tap_xy), y (number if tap_xy), " +
                     "done (boolean), " +
                     "spoken (natural, warm, concise Hinglish/English voice reply)."
@@ -405,7 +413,7 @@ class TaskActionExecutor(private val context: Context) {
                     .build()
 
                 val plan = httpClient.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) return if (stepIdx > 1) lastSpoken else null
+                    if (!resp.isSuccessful) return "Gemini could not plan the next step. Check the API key and network, then try again."
                     val raw = resp.body?.string().orEmpty()
                     val root = JSONObject(raw)
                     val textPart = root.optJSONArray("candidates")
@@ -416,7 +424,7 @@ class TaskActionExecutor(private val context: Context) {
                         ?.optString("text")
                         .orEmpty()
                     if (textPart.isBlank()) null else JSONObject(textPart)
-                } ?: return if (stepIdx > 1) lastSpoken else null
+                } ?: return "Gemini returned no usable plan. Please repeat the request."
 
                 val thought = plan.optString("thought", "")
                 val act = plan.optString("action", "done")
@@ -431,42 +439,71 @@ class TaskActionExecutor(private val context: Context) {
                 VoiceAgentForegroundService.logCallback?.invoke("⚡ AI Action $stepIdx: $act ($target)")
                 history.add("$act:$target")
 
-                when (act) {
+                if (act == "done") return lastSpoken
+
+                val actionSucceeded = when (act) {
                     "open_app" -> launchBookingOrApp("app", "", target, target)
-                    "open_url" -> executeToolCall("open_website", JSONObject().put("url", target))
-                    "send_whatsapp" -> sendWhatsAppAutonomous(target, value)
+                    "open_url" -> executeToolCall("open_website", JSONObject().put("url", target)).optString("status") == "ok"
+                    "send_whatsapp" -> target.isNotBlank() && value.isNotBlank() && sendWhatsAppAutonomous(target, value)
+                    "send_sms" -> target.isNotBlank() && value.isNotBlank() &&
+                        executeToolCall("send_sms", JSONObject().put("recipient", target).put("message", value)).optString("status") == "ok"
+                    "call_contact" -> {
+                        val callStatus = if (target.isBlank()) "failed" else
+                            executeToolCall("make_phone_call", JSONObject().put("recipient", target)).optString("status")
+                        if (callStatus == "dialer") lastSpoken = "Opened the phone dialer for $target. Tap Call if Android asks you to confirm."
+                        callStatus == "ok" || callStatus == "dialer"
+                    }
                     "youtube_play" -> {
-                        launchBookingOrApp("youtube", "", target, "youtube")
+                        val launched = target.isNotBlank() && launchBookingOrApp("youtube", "", target, "youtube")
                         if (target.isNotBlank()) {
                             mainHandler.postDelayed({
-                                AgentAccessibilityService.instance?.clickByOrdinal(1)
-                            }, 3200L)
+                                val activeService = AgentAccessibilityService.instance
+                                if (activeService?.getActivePackageName()?.contains("youtube") == true) {
+                                    activeService.clickByOrdinal(1)
+                                }
+                            }, 3000L)
                         }
+                        launched
                     }
+                    "open_setting" -> executeToolCall("open_setting", JSONObject().put("setting", target)).optString("status") == "ok"
+                    "read_screen" -> service.readVisibleScreenSummary().isNotBlank()
                     "click" -> {
-                        if (!service.clickElementByLabel(target)) {
+                        if (service.clickElementByLabel(target)) {
+                            true
+                        } else {
                             val px = plan.optDouble("x", -1.0)
                             val py = plan.optDouble("y", -1.0)
-                            if (px > 0 && py > 0) service.tapCoordinates(px.toFloat(), py.toFloat())
+                            px > 0 && py > 0 && service.tapCoordinates(px.toFloat(), py.toFloat())
                         }
                     }
                     "click_ordinal" -> service.clickByOrdinal(target.toIntOrNull() ?: 1)
                     "type" -> service.inputTextIntoField(target, value, submitImeAfter = true)
-                    "type_password" -> service.inputPasswordField(value, submitLoginAfter = true)
                     "scroll" -> service.scrollScreen(target.ifBlank { "DOWN" })
                     "tap_xy" -> service.tapCoordinates(plan.optDouble("x", 540.0).toFloat(), plan.optDouble("y", 960.0).toFloat())
                     "navigate" -> service.navigateGlobal(target.ifBlank { "BACK" })
-                    "done" -> return lastSpoken
-                    else -> return if (stepIdx > 1) lastSpoken else null
+                    "double_tap" -> service.doubleTapCenter()
+                    "long_press" -> service.longPressElementByLabel(target)
+                    "auto_scroll" -> {
+                        val enable = !target.equals("stop", ignoreCase = true)
+                        if (enable) service.startAutoScroll(target.ifBlank { "DOWN" }) else service.stopAutoScroll()
+                        true
+                    }
+                    else -> false
                 }
 
-                if (isDone) return lastSpoken
-                Thread.sleep(1900L)
+                if (!actionSucceeded) {
+                    history.add("FAILED:$act:$target")
+                    VoiceAgentForegroundService.logCallback?.invoke("⚠️ Action did not complete: $act ($target)")
+                    if (stepIdx == 10) return "I could not complete that step. Please check the screen and try a more specific instruction."
+                } else if (isDone) {
+                    return lastSpoken
+                }
+                Thread.sleep(1400L)
             } catch (_: Throwable) {
-                return if (stepIdx > 1) lastSpoken else null
+                return "I stopped because I could not verify the next step. Please check the current screen."
             }
         }
-        return lastSpoken
+        return "I reached the step limit before I could confirm the task was complete. Please check the screen."
     }
 
     private fun getWhatsAppPackage(): String? {
@@ -488,8 +525,9 @@ class TaskActionExecutor(private val context: Context) {
     }
 
     private fun sendWhatsAppAutonomous(recipient: String, message: String): Boolean {
+        if (recipient.isBlank() || message.isBlank()) return false
         val waPkg = getWhatsAppPackage()
-        val msgText = message.ifBlank { "Hello" }
+        val msgText = message.trim()
 
         if (recipient.isBlank()) {
             if (waPkg != null) {
@@ -614,8 +652,12 @@ class TaskActionExecutor(private val context: Context) {
                     val ytLaunch = context.packageManager.getLaunchIntentForPackage("com.google.android.youtube")
                     if (ytLaunch != null && startActivitySafely(ytLaunch)) return true
                 }
-                val ytIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=" + URLEncoder.encode(ytQuery.ifBlank { "music" }, "UTF-8")))
-                return startActivitySafely(ytIntent)
+                val resultsUri = Uri.parse(
+                    "https://www.youtube.com/results?search_query=" + URLEncoder.encode(ytQuery.ifBlank { "music" }, "UTF-8")
+                )
+                val nativeYouTubeIntent = Intent(Intent.ACTION_VIEW, resultsUri).setPackage("com.google.android.youtube")
+                if (startActivitySafely(nativeYouTubeIntent)) return true
+                return startActivitySafely(Intent(Intent.ACTION_VIEW, resultsUri))
             }
             "search", "google" -> {
                 val searchIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=$encodedDest"))

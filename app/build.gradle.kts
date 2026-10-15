@@ -18,8 +18,8 @@ android {
         applicationId = "com.metawork.agent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 12
-        versionName = "8.1.0"
+        versionCode = 13
+        versionName = "8.2.0"
 
         val geminiKey = localProps.getProperty("GEMINI_API_KEY") ?: System.getenv("GEMINI_API_KEY") ?: ""
         val q = '"'
@@ -44,4 +44,5 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    testImplementation("junit:junit:4.13.2")
 }

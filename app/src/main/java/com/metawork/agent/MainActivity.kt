@@ -70,7 +70,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(4.dp(), 0, 4.dp(), 12.dp())
         }
         val brandTitle = TextView(this).apply {
-            text = "MUSE AI v8.0 • UNIVERSAL"
+            text = "MUSE AI v8.2 • VOICE ASSISTANT"
             textSize = 18f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#F8FAFC"))
@@ -115,7 +115,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         transcriptView = TextView(this).apply {
-            text = "⚡ Universal Screen Engine Ready. Enable Screen Controller below, open any app, and tap the floating Muse face!"
+            text = "🎙️ Say ‘Muse’ followed by your request. Enable Screen Controller below for cross-app reading, tapping, typing, and scrolling."
             textSize = 14f
             setTextColor(Color.parseColor("#F1F5F9"))
             gravity = Gravity.CENTER
@@ -144,7 +144,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         handsFreeToggleBtn = Button(this).apply {
-            text = "⚡ Mode: Zero-Lag Tap"
+            text = "🎙️ Mode: Always-On Muse"
             textSize = 12f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.parseColor("#F8FAFC"))
@@ -155,7 +155,7 @@ class MainActivity : AppCompatActivity() {
             }
             setOnClickListener {
                 val handsFree = VoiceAgentForegroundService.instance?.toggleHandsFreeWakeMode() ?: false
-                text = if (handsFree) "🎙️ Mode: 'Muse' Wake" else "⚡ Mode: Zero-Lag Tap"
+                text = if (handsFree) "🎙️ Mode: Always-On Muse" else "⚡ Mode: Tap to Speak"
                 refreshSystemPills()
             }
         }
@@ -357,7 +357,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 6.dp())
         }
         logView = TextView(this).apply {
-            text = "• Muse v8.0 Universal Engine Ready."
+            text = "• Muse v8.2 ready — say ‘Muse’ followed by a request."
             textSize = 12f
             typeface = Typeface.MONOSPACE
             setTextColor(Color.parseColor("#CBD5E1"))
@@ -403,7 +403,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshSystemPills() {
         val hasMic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        val handsFree = VoiceAgentForegroundService.instance?.handsFreeWakeMode == true
+        val handsFree = VoiceAgentForegroundService.instance?.handsFreeWakeMode
+            ?: getSharedPreferences("muse_prefs", MODE_PRIVATE).getBoolean("hands_free_wake_mode", true)
         micStatusPill.text = when {
             !hasMic -> "🎙️ Mic: NEEDED"
             handsFree -> "🎙️ Wake: 'Muse'"
@@ -416,6 +417,9 @@ class MainActivity : AppCompatActivity() {
                 else -> Color.parseColor("#10B981")
             }
         )
+        if (::handsFreeToggleBtn.isInitialized) {
+            handsFreeToggleBtn.text = if (handsFree) "🎙️ Mode: Always-On Muse" else "⚡ Mode: Tap to Speak"
+        }
 
         val hasAcc = AgentAccessibilityService.instance != null
         accStatusPill.text = if (hasAcc) "📱 Screen Control: ON" else "📱 Screen Control: OFF - TAP"
@@ -446,7 +450,7 @@ class MainActivity : AppCompatActivity() {
         }
         if (missing.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, missing.toTypedArray(), 100)
-            return
+            if (missing.contains(Manifest.permission.RECORD_AUDIO)) return
         }
 
         try {
@@ -467,6 +471,14 @@ class MainActivity : AppCompatActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         refreshSystemPills()
-        ContextCompat.startForegroundService(this, Intent(this, VoiceAgentForegroundService::class.java))
+        val hasMicPermission = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        if (hasMicPermission) {
+            ContextCompat.startForegroundService(this, Intent(this, VoiceAgentForegroundService::class.java))
+        } else {
+            Toast.makeText(this, "Microphone permission is required for the Muse wake word.", Toast.LENGTH_LONG).show()
+        }
     }
 }

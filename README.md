@@ -1,70 +1,62 @@
-# MetaWork — 24/7 Voice-Only Autonomous Mobile Agent
+# MetaWork — Android Voice Assistant with Screen Automation
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-emerald.svg)](LICENSE)
 [![Platform: Android 8.0+](https://img.shields.io/badge/Platform-Android%208.0%2B%20(API%2026%2B)-38BDF8.svg)](https://developer.android.com)
-[![Voice Engine: Gemini Live API](https://img.shields.io/badge/Voice-Gemini%20Multimodal%20Live-F59E0B.svg)](https://ai.google.dev/gemini-api/docs/live-api)
 
-**MetaWork** is an open-source, 24/7 hands-free autonomous voice agent for Android hosted at [github.com/khitij376-alt/MetaWork](https://github.com/khitij376-alt/MetaWork). It runs continuously on your phone with **no keyboard** and **no text prompt UI**—listening in the background and executing complex, multi-step tasks across your installed mobile apps purely through natural voice conversation.
+**MetaWork** is an Android voice assistant that combines a wake-word foreground service, deterministic voice commands, Android Accessibility screen actions, and an optional Gemini task planner. It can perform supported actions across installed apps; it is **not** a guarantee that every task in every app can be completed autonomously.
 
-Whether you want to book train tickets on IRCTC, search flights on MakeMyTrip, hail a cab on Uber, reserve bus seats on RedBus, grab movie tickets on BookMyShow, send WhatsApp or SMS messages, or place direct phone calls, MetaWork reads the screen, fills forms, taps buttons, and talks back to you in real time.
+## What it can do
 
-## Key Capabilities
+- Listen for the configurable-by-toggle **“Muse”** wake word using Android speech recognition. Wake mode is on by default and is remembered across service restarts. On-device recognition is preferred where the phone provides it; otherwise Android may use its configured speech-recognition provider.
+- Launch apps and websites; read visible screen text; tap accessible controls; type into visible fields; scroll and perform supported system actions.
+- Handle common English and Hindi/Hinglish intents for YouTube search/play, contact calls, WhatsApp messages, scrolling, settings, alarms, and other built-in commands.
+- Use an optional Gemini API key for multi-step planning against the current Accessibility UI tree. Common deterministic commands do not require the Gemini planner.
 
-* **24/7 Always-On Background Daemon**: Powered by an Android `ForegroundService` (`microphone|specialUse`), `PARTIAL_WAKE_LOCK`, `START_STICKY`, a 15-second self-healing watchdog loop, and `BootCompletedReceiver` so the voice agent stays alive 24/7 without closing after 30 seconds.
-* **Dual-Engine Voice Brain (Cloud + On-Device Fallback)**: Connects to the [Gemini Multimodal Live API](https://ai.google.dev/gemini-api/docs/live-api) (`BidiGenerateContent` WebSocket) when `GEMINI_API_KEY` is configured, and automatically runs a continuous on-device `SpeechRecognizer` + `TextToSpeech` loop even if no API key is set.
-* **Zero-Keyboard, Zero-Prompt Experience**: Designed for complete hands-free operation. You never have to type prompts or tap input boxes—MetaWork injects text directly into app fields and clicks buttons on your behalf.
-* **Autonomous Screen Navigation**: Uses Android's `AccessibilityService` (`canRetrieveWindowContent` + `canPerformGestures`) to inspect every visible button, label, seat, price, and text field on the active screen, then executes taps, text entry, and directional scrolling step-by-step.
-* **Built-In Payment & Safety Guardrail**: Always asks for your explicit spoken confirmation before tapping any final payment or checkout button.
+## Important limits
 
-## System Architecture & Execution Flow
+- Android requires the user to grant microphone and other runtime permissions and manually enable Muse Screen Controller in **Settings → Accessibility**. The service cannot grant these permissions itself.
+- Android can stop background microphone services, especially after reboot or under battery restrictions. The boot receiver requests startup, but Android version/device policy determines whether a microphone foreground service can start. **Continuous 24/7 availability cannot be guaranteed.** Keep the foreground notification enabled and reopen Muse if the OS stops it.
+- “Always-on” means the microphone is active to detect the wake word. Android's offline-recognition preference is not a guarantee that audio never reaches the device's configured speech service. The app responds to commands only after “Muse” (or when the user explicitly wakes it from the app).
+- Accessibility automation depends on what the target app exposes to Android. App redesigns, protected views, permission dialogs, and unavailable controls can prevent an action.
+- Muse will not bypass OTPs, CAPTCHAs, age checks, or other verification. Account signup needs real user details and may require the user to complete private or verification steps. A named signup request opens that app rather than turning it into a Google search.
+- Phone calls and messages require the relevant permissions/apps and a clearly identified contact/message. WhatsApp UI behavior varies by version; check the recipient and result on the phone.
 
-| Layer | Source File | How It Works |
-| :--- | :--- | :--- |
-| **Always-On Voice Service** | `VoiceAgentForegroundService.kt` | Acquires a non-reference-counted partial CPU wake lock, runs a 15-second watchdog heartbeat, and maintains the 24/7 voice session in the background. |
-| **Bidirectional Voice & Tool Engine** | `GeminiVoiceSessionManager.kt` | Streams 16kHz PCM audio from `AudioRecord`, plays 24kHz voice responses via `AudioTrack`, auto-reconnects on network drops, and dispatches real-time tool calls. |
-| **Autonomous Screen Controller** | `AgentAccessibilityService.kt` | Dumps the live window UI tree to JSON (`dumpScreenTreeJson`), clicks elements by label or coordinates (`clickElementByLabel`, `tapCoordinates`), types text without a keyboard (`inputTextIntoField`), and scrolls (`scrollScreen`). |
-| **Multi-App Workflow Executor** | `TaskActionExecutor.kt` | Resolves contact names from your phonebook, triggers app deep-links (Uber, IRCTC, MakeMyTrip, RedBus, BookMyShow, WhatsApp, SMS, Phone), and chains UI actions. |
-| **Auto-Start & Voice Orb HUD** | `BootCompletedReceiver.kt` & `MainActivity.kt` | Automatically starts the 24/7 service on device boot and keeps the HUD screen awake (`FLAG_KEEP_SCREEN_ON`) while showing live voice transcripts. |
+## Architecture
 
-## How to Install & Use MetaWork (Step-by-Step Guide)
+| Layer | Source | Responsibility |
+|---|---|---|
+| Voice service and wake loop | `VoiceAgentForegroundService.kt` | Foreground microphone service, wake-word recognition, speech-to-text dispatch, text-to-speech feedback, and command lifecycle. |
+| Intent parsing | `VoiceCommandParser.kt` | Tested English/Hinglish parsing for YouTube queries, calls, WhatsApp recipients/messages, and signup targets. |
+| Screen controller | `AgentAccessibilityService.kt` | Reads the visible accessibility tree and performs supported taps, typing, scrolling, and gestures. Must be enabled manually by the user. |
+| Action executor and planner | `TaskActionExecutor.kt` | Executes built-in Android/app actions and, when configured, runs a bounded Gemini screen-planning loop. |
+| App UI and setup | `MainActivity.kt` | Permission onboarding, wake-mode toggle, API-key configuration, service status, and Accessibility setup entry point. |
+| Boot receiver | `BootCompletedReceiver.kt` | Requests service startup after boot, subject to Android's foreground-service and microphone restrictions. |
 
-### Option A: Download & Install Pre-Built APK Directly on Your Phone (No PC Needed)
+## Setup
 
-1. Open this repository on GitHub and tap the **Actions** tab at the top ([github.com/khitij376-alt/MetaWork/actions](https://github.com/khitij376-alt/MetaWork/actions)).
-2. Tap the latest green **MetaWork Android CI** workflow run.
-3. Scroll down to the **Artifacts** section and tap **MetaWork-24x7-debug-apk** to download the zip file, extract `app-debug.apk`, and install it on your Android phone (Android 8.0 / API 26 or newer).
+1. Install the debug APK from the repository's latest successful **MetaWork Android CI** run, or open the project in Android Studio and build `app`.
+2. Grant **Microphone** permission. Contacts, Phone, SMS, and Notifications permissions are used only for their corresponding features.
+3. Enable **Muse Screen Controller** under Android **Settings → Accessibility → Installed apps** for cross-app screen reading/actions.
+4. Disable battery optimization for MetaWork if you want the OS to be less aggressive about stopping the foreground service. Device policy may still stop it.
+5. Add a Gemini API key in the app only if you want the multi-step Gemini planner. Keep the key private; do not commit it to source control.
 
-### Option B: Build from Source (Android Studio or Command Line)
+## Example commands
 
-1. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/khitij376-alt/MetaWork.git
-   cd MetaWork
-   ```
-2. **Add Your Gemini API Key**:
-   * Get a free Gemini API key from [Google AI Studio](https://ai.google.dev/gemini-api/docs/get-started).
-   * Copy `local.properties.example` to `local.properties` and paste `GEMINI_API_KEY=AIzaSy...`.
-3. **Compile & Install on Your Phone**:
-   ```bash
-   ./gradlew installDebug
-   ```
+Say the wake word followed by one request:
 
-## First-Time Phone Setup (One-Time Only)
+- “Muse, open YouTube and play Arijit Singh.”
+- “Muse, YouTube par Arijit Singh ke gaane chalao.”
+- “Muse, call Rahul.” / “Muse, Rahul ko phone lagao.”
+- “Muse, WhatsApp par Rahul ko ‘I will be late’ bhejo.”
+- “Muse, scroll down three times.”
+- “Muse, create an Instagram account.” — opens Instagram; signup may require the user to provide details and complete verification.
+- “Muse, stop listening.” / “Muse, enable wake word.”
 
-1. **Approve Runtime Permissions**: Tap **Allow** when prompted for **Microphone**, **Contacts**, **SMS**, **Phone Calls**, and **Notifications**.
-2. **Allow Unrestricted Battery Usage**: Tap **Allow** on the battery optimization prompt so Android never suspends the 24/7 background service.
-3. **Enable the Accessibility Screen Controller**:
-   * Tap **Enable Screen Controller** inside the app (or open **Settings → Accessibility → Installed apps → MetaWork Autonomous Screen Controller**) and toggle it **ON**.
-   * *(Android 13/14 Tip: If Android shows "Restricted setting", open **Settings → Apps → MetaWork 24/7 Agent → ⋮ (top right) → Allow restricted settings**, then enable it in Accessibility.)*
+Without the wake word, voice commands are ignored while the service is in wake-word standby. The user can turn standby listening off in the app or by voice.
 
-## What You Can Say (Voice Command Examples)
+## Build and tests
 
-* *"Book a train ticket from Patna to New Delhi tomorrow on IRCTC."*
-* *"Search flights from Patna to Mumbai this Friday on MakeMyTrip."*
-* *"Book an Uber to Patna Junction railway station."*
-* *"Send a WhatsApp message to Rahul saying I have booked the train tickets."*
-* *"Call Rahul on the phone."*
-* *"Scroll down"*, *"Click on Search"*, or *"Go back."*
+The GitHub Actions workflow runs `testDebugUnitTest` and `assembleDebug`. Voice parsing regression tests live under `app/src/test/`.
 
 ## License
 

@@ -393,10 +393,17 @@ class AgentAccessibilityService : AccessibilityService() {
                 val candidates = mutableListOf<AccessibilityNodeInfo>()
                 collectClickableContentNodes(root, candidates, 0)
                 // Pick the content item closest to the vertical center of the screen (between 22% and 75% height)
-                val centerCandidate = candidates.minByOrNull { node ->
+                var centerCandidate: AccessibilityNodeInfo? = null
+                var bestDist = Int.MAX_VALUE
+                val targetY = (h * 0.45f).toInt()
+                for (cand in candidates) {
                     val r = Rect()
-                    node.getBoundsInScreen(r)
-                    abs(r.centerY() - (h * 0.45f).toInt())
+                    cand.getBoundsInScreen(r)
+                    val dist = abs(r.centerY() - targetY)
+                    if (dist < bestDist) {
+                        bestDist = dist
+                        centerCandidate = cand
+                    }
                 }
                 if (centerCandidate != null) {
                     val r = Rect()

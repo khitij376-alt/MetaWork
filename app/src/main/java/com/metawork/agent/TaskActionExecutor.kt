@@ -533,50 +533,50 @@ class TaskActionExecutor(private val context: Context) {
             if (launchIntent != null && startActivitySafely(launchIntent)) {
                 VoiceAgentForegroundService.logCallback?.invoke("🔍 Opening WhatsApp & verifying window for '$recipient'...")
                 Thread {
-                    try {
-                        val service = AgentAccessibilityService.instance ?: return@Thread
-                        // Step 1: Poll until WhatsApp window is actually in the foreground (up to 4.5s)
-                        var waVisible = false
-                        for (i in 1..15) {
-                            Thread.sleep(300L)
-                            if (service.getActivePackageName().contains("whatsapp")) {
-                                waVisible = true
-                                break
-                            }
-                        }
-                        if (!waVisible) return@Thread
-                        Thread.sleep(400L)
-
-                        // Step 2: Click WhatsApp Search icon & type recipient name
-                        service.clickUniversalSearchTrigger()
-                        Thread.sleep(750L)
-                        service.inputTextIntoField("Search", recipient, submitImeAfter = false)
-
-                        // Step 3: Poll until contact row appears and click it
-                        var clickedContact = false
-                        for (i in 1..8) {
-                            Thread.sleep(350L)
-                            if (service.clickContactRowInList(recipient)) {
-                                clickedContact = true
-                                break
-                            }
-                        }
-                        if (!clickedContact) return@Thread
-                        Thread.sleep(750L)
-
-                        // Step 4: Type ONLY the clean message into WhatsApp chat input box (com.whatsapp:id/entry) & click Send!
-                        val typed = service.inputTextIntoField("Message", msgText, submitImeAfter = false)
-                        if (typed) {
-                            Thread.sleep(550L)
-                            service.clickWhatsAppSendButton()
-                            VoiceAgentForegroundService.logCallback?.invoke("✅ Sent '$msgText' to $recipient")
-                        }
-                    } catch (_: Throwable) {}
+                    runWhatsAppUiSearchFlow(recipient, msgText)
                 }.start()
                 return true
             }
         }
         return false
+    }
+
+    private fun runWhatsAppUiSearchFlow(recipient: String, msgText: String) {
+        try {
+            val service = AgentAccessibilityService.instance ?: return
+            var waVisible = false
+            for (i in 1..15) {
+                Thread.sleep(300L)
+                if (service.getActivePackageName().contains("whatsapp")) {
+                    waVisible = true
+                    break
+                }
+            }
+            if (!waVisible) return
+            Thread.sleep(400L)
+
+            service.clickUniversalSearchTrigger()
+            Thread.sleep(750L)
+            service.inputTextIntoField("Search", recipient, submitImeAfter = false)
+
+            var clickedContact = false
+            for (i in 1..8) {
+                Thread.sleep(350L)
+                if (service.clickContactRowInList(recipient)) {
+                    clickedContact = true
+                    break
+                }
+            }
+            if (!clickedContact) return
+            Thread.sleep(750L)
+
+            val typed = service.inputTextIntoField("Message", msgText, submitImeAfter = false)
+            if (typed) {
+                Thread.sleep(550L)
+                service.clickWhatsAppSendButton()
+                VoiceAgentForegroundService.logCallback?.invoke("✅ Sent '$msgText' to $recipient")
+            }
+        } catch (_: Throwable) {}
     }
 
     private fun launchBookingOrApp(category: String, origin: String, destination: String, appName: String): Boolean {

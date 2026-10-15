@@ -994,7 +994,7 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun buildNotification(text: String): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Muse AI v8.0 Thinking Agent")
+            .setContentTitle("Muse AI v8.1 Thinking Agent")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)

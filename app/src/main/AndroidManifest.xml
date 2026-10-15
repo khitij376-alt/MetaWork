@@ -34,6 +34,8 @@
 
     <application
         android:allowBackup="true"
+        android:icon="@drawable/ic_batman_logo"
+        android:roundIcon="@drawable/ic_batman_logo"
         android:label="Muse AI Agent"
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.NoActionBar">

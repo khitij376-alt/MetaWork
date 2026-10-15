@@ -962,7 +962,8 @@ class VoiceAgentForegroundService : Service(), TextToSpeech.OnInitListener {
                                 delay(350L)
                                 if (service.getActivePackageName().contains("youtube")) {
                                     delay(1400L)
-                                    service.clickByOrdinal(1)
+                                    val selected = service.clickElementByLabel(query) || service.clickByOrdinal(1)
+                                    logCallback?.invoke(if (selected) "🎬 Selected a YouTube result for: $query" else "⚠️ Could not select a YouTube result for: $query")
                                     break
                                 }
                             }

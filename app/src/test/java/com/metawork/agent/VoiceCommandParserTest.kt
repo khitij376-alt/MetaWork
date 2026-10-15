@@ -18,6 +18,7 @@ class VoiceCommandParserTest {
         assertEquals("Rahul", VoiceCommandParser.extractCallTarget("Call Rahul"))
         assertEquals("Rahul", VoiceCommandParser.extractCallTarget("Rahul ko phone lagao"))
         assertEquals("Rahul", VoiceCommandParser.extractCallTarget("Rahul ko call karo"))
+        assertEquals("Rahul", VoiceCommandParser.extractCallTarget("Rahul ko call kar do"))
         assertEquals("Rahul", VoiceCommandParser.extractCallTarget("Please dial to Rahul"))
     }
 

@@ -363,7 +363,7 @@ class TaskActionExecutor(private val context: Context) {
     }
 
     /**
-     * Multi-Step Autonomous Gemini ReAct Thinking Loop (up to 6 steps):
+     * Bounded Multi-Step Gemini ReAct planner (up to 10 observable steps):
      * Inspects screen UI tree (including password/editable fields), thinks about the goal, and executes actions.
      */
     fun runGeminiAutonomousScreenPlan(userGoal: String, passedKey: String = ""): String? {
@@ -459,7 +459,10 @@ class TaskActionExecutor(private val context: Context) {
                             mainHandler.postDelayed({
                                 val activeService = AgentAccessibilityService.instance
                                 if (activeService?.getActivePackageName()?.contains("youtube") == true) {
-                                    activeService.clickByOrdinal(1)
+                                    val selected = activeService.clickElementByLabel(target) || activeService.clickByOrdinal(1)
+                                    VoiceAgentForegroundService.logCallback?.invoke(
+                                        if (selected) "🎬 Selected a YouTube result for: $target" else "⚠️ Could not select a YouTube result for: $target"
+                                    )
                                 }
                             }, 3000L)
                         }
